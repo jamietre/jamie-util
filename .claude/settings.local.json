@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(exiftool:*)",
+      "Bash(node --version:*)",
+      "Bash(pnpm install)",
+      "Bash(pnpm test:*)",
+      "Bash(pnpm exec tsx:*)",
+      "Bash(pnpm add:*)",
+      "WebSearch",
+      "WebFetch(domain:bloomberg.github.io)",
+      "Bash(pnpm cli --help:*)",
+      "Bash(ps aux:*)",
+      "Bash(sudo kill:*)",
+      "Bash(python3:*)"
+    ]
+  }
+}

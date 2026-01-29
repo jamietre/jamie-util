@@ -1,0 +1,23 @@
+{
+  "name": "ingest-music",
+  "version": "1.0.0",
+  "description": "Process concert recording zip archives into an organized, tagged music library",
+  "type": "module",
+  "scripts": {
+    "cli": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "dependencies": {
+    "@stricli/core": "^1.2.5",
+    "music-metadata": "^10.6.0",
+    "tar": "^7.0.0",
+    "yauzl-promise": "^4.0.0"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "libraryBasePath": "P:/MusicLibrary/LiveMusic",
+  "setlistSources": {
+    "setlist.fm": {
+      "apiKey": "your-setlist-fm-api-key",
+      "url": "https://api.setlist.fm/rest/1.0"
+    },
+    "phish.net": {
+      "apiKey": "your-phish-net-api-key",
+      "url": "https://api.phish.net/v5"
+    }
+  },
+  "defaults": {
+    "setlistSources": ["setlist.fm"],
+    "albumTemplate": "{date} - {venue}, {city}, {state}",
+    "albumArtist": "{artist}",
+    "genre": "Live",
+    "targetPathTemplate": "{artist}/{date} - {venue}, {city}, {state}",
+    "fileNameTemplate": "{date} S{set} T{track} - {title}.flac",
+    "encoreInSet2": true
+  },
+  "bands": {
+    "phish": {
+      "setlistSources": ["phish.net", "setlist.fm"],
+      "genre": "Jam"
+    }
+  }
+}

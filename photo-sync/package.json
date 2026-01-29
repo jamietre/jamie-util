@@ -1,0 +1,21 @@
+{
+  "name": "photo-sync",
+  "version": "1.0.0",
+  "description": "Copy photos from Android phone to organized archive by date",
+  "type": "module",
+  "scripts": {
+    "cli": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "dependencies": {
+    "@stricli/core": "^1.2.5",
+    "exifreader": "^4.25.0"
+  }
+}
