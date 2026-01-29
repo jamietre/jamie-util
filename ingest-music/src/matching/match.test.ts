@@ -5,7 +5,7 @@ import {
   naturalCompare,
   TrackCountMismatchError,
 } from "./match.js";
-import type { AudioInfo, SetlistSong } from "./types.js";
+import type { AudioInfo, SetlistSong } from "../config/types.js";
 
 function makeAudio(name: string, trackNumber?: number): AudioInfo {
   return {

@@ -12,7 +12,16 @@
       "Bash(pnpm cli --help:*)",
       "Bash(ps aux:*)",
       "Bash(sudo kill:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "mcp__ide__getDiagnostics",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.ccs.kaitran.ca)",
+      "Bash(cat:*)",
+      "Bash(curl:*)",
+      "Bash(pnpm run build:*)",
+      "Bash(pnpm run:*)",
+      "Bash(tree:*)",
+      "Bash(ls:*)"
     ]
   }
 }

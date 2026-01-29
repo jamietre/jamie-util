@@ -2,9 +2,9 @@ import { describe, it, expect, vi } from "vitest";
 
 // Test the pure helper logic that's exported from tagger (buildTemplateVars)
 // and the integration of match + template rendering
-import { buildTemplateVars } from "./tagger.js";
-import { renderTemplate } from "./template.js";
-import type { MatchedTrack, ShowInfo, BandConfig } from "./types.js";
+import { buildTemplateVars } from "./output/tagger.js";
+import { renderTemplate } from "./output/template.js";
+import type { MatchedTrack, ShowInfo, BandConfig } from "./config/types.js";
 
 describe("ingest-music pipeline helpers", () => {
   const showInfo: ShowInfo = {
@@ -46,6 +46,12 @@ describe("ingest-music pipeline helpers", () => {
     expect(vars.title).toBe("Tweezer");
     expect(vars.track).toBe("01");
     expect(vars.set).toBe(1);
+  });
+
+  it("renders custom date format using {date:FORMAT} syntax", () => {
+    const vars = buildTemplateVars(track, showInfo);
+    const result = renderTemplate("{date:YYYY.MM.DD}", vars);
+    expect(result).toBe("2024.08.16");
   });
 
   it("renders target path template", () => {

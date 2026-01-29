@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { needsConversion } from "./audio.js";
-import type { AudioInfo } from "./types.js";
+import type { AudioInfo } from "../config/types.js";
 
 function makeInfo(
   bitsPerSample: number | undefined,

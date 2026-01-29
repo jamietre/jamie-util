@@ -1,4 +1,4 @@
-import type { ShowInfo } from "./types.js";
+import type { ShowInfo } from "../config/types.js";
 
 /**
  * Parse show info from a zip filename.

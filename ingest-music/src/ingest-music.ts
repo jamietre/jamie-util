@@ -11,16 +11,86 @@ import type {
   ProgressCallback,
   MatchedTrack,
   BandConfig,
-} from "./types.js";
-import { loadConfig, resolveBandConfig } from "./config.js";
-import { parseZipFilename } from "./parse-filename.js";
-import { extractArchive, listAudioFiles, cleanupTempDir, isArchive } from "./extract.js";
-import { verifyRequiredTools } from "./startup.js";
-import { analyzeAllAudio, convertAllIfNeeded } from "./audio.js";
-import { fetchSetlist } from "./setlist.js";
-import { matchTracks } from "./match.js";
-import { tagAllTracks, buildTemplateVars } from "./tagger.js";
-import { renderTemplate, zeroPad } from "./template.js";
+} from "./config/types.js";
+import { loadConfig, resolveBandConfig } from "./config/config.js";
+import { parseZipFilename } from "./matching/parse-filename.js";
+import { extractArchive, listAudioFiles, listNonAudioFiles, cleanupTempDir, isArchive } from "./utils/extract.js";
+import { verifyRequiredTools } from "./utils/startup.js";
+import { analyzeAllAudio, convertAllIfNeeded } from "./audio/audio.js";
+import { fetchSetlist } from "./setlist/setlist.js";
+import { matchTracks } from "./matching/match.js";
+import { tagAllTracks, buildTemplateVars } from "./output/tagger.js";
+import { renderTemplate, zeroPad, sanitize, sanitizeFilename } from "./output/template.js";
+import { generateLogContent, writeLogFile } from "./output/log.js";
+
+/**
+ * Get the appropriate filename template based on the number of sets.
+ * Uses fileNameTemplateSingleSet if there's only one set, otherwise fileNameTemplate.
+ */
+function getFileNameTemplate(
+  matched: MatchedTrack[],
+  bandConfig: BandConfig
+): string {
+  const uniqueSets = new Set(matched.map((m) => m.effectiveSet)).size;
+  if (uniqueSets === 1 && bandConfig.fileNameTemplateSingleSet) {
+    return bandConfig.fileNameTemplateSingleSet;
+  }
+  return bandConfig.fileNameTemplate;
+}
+
+/**
+ * Check for existing shows with the same date in the library.
+ * Returns paths to potentially duplicate shows.
+ */
+async function findExistingShows(
+  targetDir: string,
+  showDate: string,
+  onProgress: ProgressCallback
+): Promise<string[]> {
+  const matches: string[] = [];
+
+  // Check if exact target exists
+  try {
+    await fs.access(targetDir);
+    matches.push(targetDir);
+  } catch {
+    // Target doesn't exist, which is good
+  }
+
+  // Search parent directory for folders with the same date
+  const parentDir = path.dirname(targetDir);
+  try {
+    const entries = await fs.readdir(parentDir, { withFileTypes: true });
+
+    // Extract date components for flexible matching (YYYY-MM-DD, YYYY.MM.DD, YYYYMMDD, etc.)
+    const datePatterns = [
+      showDate, // YYYY-MM-DD
+      showDate.replace(/-/g, "."), // YYYY.MM.DD
+      showDate.replace(/-/g, ""), // YYYYMMDD
+      showDate.replace(/-/g, "_"), // YYYY_MM_DD
+    ];
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const fullPath = path.join(parentDir, entry.name);
+        if (fullPath === targetDir) continue; // Skip if it's the exact target (already checked)
+
+        // Check if folder name contains any date pattern
+        for (const pattern of datePatterns) {
+          if (entry.name.includes(pattern)) {
+            matches.push(fullPath);
+            break;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // Parent directory doesn't exist or can't be read - not an error, library might be empty
+    onProgress(`Note: Could not check for existing shows in ${parentDir}`);
+  }
+
+  return matches;
+}
 
 /**
  * Main entry point: process a single zip file or batch of zips.
@@ -30,8 +100,8 @@ export async function ingestMusic(
   flags: CliFlags,
   onProgress: ProgressCallback = console.log
 ): Promise<IngestResult[]> {
-  // Verify required tools are available
-  await verifyRequiredTools(onProgress);
+  // Verify required tools are available (silent on success)
+  await verifyRequiredTools();
 
   // Load config
   const config = await loadConfig(flags.config);
@@ -124,7 +194,7 @@ async function processSingleArchive(
 
   try {
     // Step 4: List and analyze audio files
-    const audioFiles = await listAudioFiles(tmpDir);
+    const audioFiles = await listAudioFiles(tmpDir, bandConfig.excludePatterns ?? []);
     if (audioFiles.length === 0) {
       throw new Error("No audio files found in archive");
     }
@@ -137,6 +207,7 @@ async function processSingleArchive(
     onProgress("\nChecking conversion requirements...");
     audioInfos = await convertAllIfNeeded(
       audioInfos,
+      bandConfig,
       flags["skip-conversion"],
       onProgress
     );
@@ -147,6 +218,22 @@ async function processSingleArchive(
     onProgress(
       `Found setlist: ${setlist.songs.length} song(s) across ${new Set(setlist.songs.map((s) => s.set)).size} set(s)`
     );
+    if (setlist.url) {
+      onProgress(`Setlist URL: ${setlist.url}`);
+    }
+
+    // Update showInfo with venue details from API (more accurate than filename parsing)
+    // CLI flags still take precedence
+    if (!flags.venue && setlist.venue) {
+      showInfo.venue = setlist.venue;
+    }
+    if (!flags.city && setlist.city) {
+      showInfo.city = setlist.city;
+    }
+    if (!flags.state && setlist.state) {
+      showInfo.state = setlist.state;
+    }
+    onProgress(`Venue: ${showInfo.venue}, ${showInfo.city}, ${showInfo.state}`);
 
     // Step 7: Match tracks to setlist
     onProgress("\nMatching tracks to setlist...");
@@ -172,21 +259,32 @@ async function processSingleArchive(
       }
     }
 
-    // Compute library path
+    // Compute library path (sanitize values to avoid path issues - slashes → dashes)
     const targetDir = path.join(
       config.libraryBasePath,
       renderTemplate(bandConfig.targetPathTemplate, {
-        artist: showInfo.artist,
+        artist: sanitizeFilename(showInfo.artist),
         date: showInfo.date,
-        venue: showInfo.venue,
-        city: showInfo.city,
-        state: showInfo.state,
+        venue: sanitizeFilename(showInfo.venue),
+        city: sanitizeFilename(showInfo.city),
+        state: sanitizeFilename(showInfo.state),
       })
     );
 
+    // Check for existing shows
+    const existingShows = await findExistingShows(targetDir, showInfo.date, onProgress);
+    if (existingShows.length > 0) {
+      onProgress("\n⚠️  WARNING: Potentially duplicate show(s) found:");
+      for (const show of existingShows) {
+        onProgress(`  - ${show}`);
+      }
+    }
+
     if (flags["dry-run"]) {
       onProgress("\n--- DRY RUN ---");
-      printDryRun(matched, showInfo, bandConfig, targetDir, onProgress);
+      const nonAudioFiles = await listNonAudioFiles(tmpDir, bandConfig.excludePatterns ?? []);
+      printTagsSummary(matched, showInfo, bandConfig, onProgress);
+      printDryRun(matched, showInfo, bandConfig, targetDir, nonAudioFiles, onProgress);
       return {
         zipPath,
         showInfo,
@@ -198,11 +296,32 @@ async function processSingleArchive(
 
     // Step 9: Tag FLAC files
     onProgress("\nTagging files...");
+    printTagsSummary(matched, showInfo, bandConfig, onProgress);
     await tagAllTracks(matched, showInfo, bandConfig, onProgress);
 
     // Step 10: Copy to library
     onProgress(`\nCopying to library: ${targetDir}`);
     await copyToLibrary(matched, showInfo, bandConfig, targetDir, onProgress);
+
+    // Step 10b: Copy non-audio files (artwork, info.txt, etc.)
+    const nonAudioFiles = await listNonAudioFiles(tmpDir, bandConfig.excludePatterns ?? []);
+    if (nonAudioFiles.length > 0) {
+      onProgress(`\nCopying ${nonAudioFiles.length} supplementary file(s)...`);
+      await copyNonAudioFiles(nonAudioFiles, targetDir, onProgress);
+    }
+
+    // Step 10c: Generate and write log file
+    onProgress("\nGenerating ingest log...");
+    const logContent = generateLogContent(
+      showInfo,
+      setlist,
+      matched,
+      bandConfig,
+      zipPath,
+      nonAudioFiles
+    );
+    await writeLogFile(targetDir, logContent);
+    onProgress(`  Created: ingest-log.md`);
 
     onProgress("\nDone!");
     return {
@@ -231,20 +350,59 @@ function printMatchPreview(
   }
 }
 
+function printTagsSummary(
+  matched: MatchedTrack[],
+  showInfo: ShowInfo,
+  bandConfig: BandConfig,
+  onProgress: ProgressCallback
+): void {
+  // Build common tags using first track for template vars
+  const vars = buildTemplateVars(matched[0], showInfo);
+  const album = sanitize(renderTemplate(bandConfig.albumTemplate, vars));
+  const albumArtist = sanitize(renderTemplate(bandConfig.albumArtist, vars));
+  const artist = sanitize(showInfo.artist);
+  const genre = sanitize(bandConfig.genre);
+  const year = showInfo.date.split("-")[0];
+
+  onProgress("\nCommon tags:");
+  onProgress(`  ARTIST: ${artist}`);
+  onProgress(`  ALBUMARTIST: ${albumArtist}`);
+  onProgress(`  ALBUM: ${album}`);
+  onProgress(`  GENRE: ${genre}`);
+  onProgress(`  DATE: ${year}`);
+
+  onProgress("\nPer-track tags:");
+  for (const m of matched) {
+    const title = sanitize(m.song.title);
+    const trackNum = zeroPad(m.trackInSet);
+    const discNum = m.effectiveSet;
+    onProgress(`  ${path.basename(m.audioFile.filePath)}: TITLE="${title}" TRACKNUMBER=${trackNum} DISCNUMBER=${discNum}`);
+  }
+}
+
 function printDryRun(
   matched: MatchedTrack[],
   showInfo: ShowInfo,
   bandConfig: BandConfig,
   targetDir: string,
+  nonAudioFiles: string[],
   onProgress: ProgressCallback
 ): void {
+  const fileNameTemplate = getFileNameTemplate(matched, bandConfig);
   onProgress(`Target directory: ${targetDir}`);
-  onProgress("\nFiles that would be created:");
+  onProgress("\nAudio files that would be created:");
   for (const m of matched) {
     const vars = buildTemplateVars(m, showInfo);
-    const fileName = renderTemplate(bandConfig.fileNameTemplate, vars);
+    const fileName = renderTemplate(fileNameTemplate, vars);
     onProgress(`  ${path.join(targetDir, fileName)}`);
   }
+  if (nonAudioFiles.length > 0) {
+    onProgress("\nSupplementary files that would be copied:");
+    for (const f of nonAudioFiles) {
+      onProgress(`  ${path.join(targetDir, path.basename(f))}`);
+    }
+  }
+  onProgress(`\nLog file: ${path.join(targetDir, "ingest-log.md")}`);
 }
 
 async function copyToLibrary(
@@ -255,10 +413,11 @@ async function copyToLibrary(
   onProgress: ProgressCallback
 ): Promise<void> {
   await fs.mkdir(targetDir, { recursive: true });
+  const fileNameTemplate = getFileNameTemplate(matched, bandConfig);
 
   for (const m of matched) {
     const vars = buildTemplateVars(m, showInfo);
-    const fileName = renderTemplate(bandConfig.fileNameTemplate, vars);
+    const fileName = renderTemplate(fileNameTemplate, vars);
     const destPath = path.join(targetDir, fileName);
 
     // Never overwrite existing files
@@ -272,6 +431,29 @@ async function copyToLibrary(
 
     onProgress(`  Copying: ${fileName}`);
     await fs.copyFile(m.audioFile.filePath, destPath);
+  }
+}
+
+async function copyNonAudioFiles(
+  files: string[],
+  targetDir: string,
+  onProgress: ProgressCallback
+): Promise<void> {
+  for (const filePath of files) {
+    const fileName = path.basename(filePath);
+    const destPath = path.join(targetDir, fileName);
+
+    // Never overwrite existing files
+    try {
+      await fs.access(destPath);
+      onProgress(`  SKIP (exists): ${fileName}`);
+      continue;
+    } catch {
+      // File doesn't exist — proceed
+    }
+
+    onProgress(`  Copying: ${fileName}`);
+    await fs.copyFile(filePath, destPath);
   }
 }
 

@@ -13,7 +13,19 @@ const DEFAULT_CONFIG: Config = {
     genre: "Live",
     targetPathTemplate: "{artist}/{date} - {venue}, {city}, {state}",
     fileNameTemplate: "{date} S{set} T{track} - {title}.flac",
+    fileNameTemplateSingleSet: "{date} T{track} - {title}.flac",
     encoreInSet2: true,
+    conversion: {
+      flac: {
+        compressionLevel: 8,
+      },
+    },
+    excludePatterns: [
+      "^\\._", // macOS resource fork files (AppleDouble format)
+      "^\\.DS_Store$", // macOS folder metadata
+      "^Thumbs\\.db$", // Windows thumbnails
+      "^\\.", // Other hidden files
+    ],
   },
   bands: {},
 };
@@ -37,13 +49,16 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
     try {
       const content = await fs.readFile(candidate, "utf-8");
       const parsed = JSON.parse(content) as Partial<Config>;
+      console.log(`Found config at ${candidate}`);
       return mergeConfig(DEFAULT_CONFIG, parsed);
     } catch {
       // File not found or invalid — try next
     }
   }
 
-  return DEFAULT_CONFIG;
+  throw new Error(
+    `Could not find a valid config file. Please create one at ~/.config/ingest-music/config.json or ./ingest-music.json, or specify a path with the --config flag.`,
+  );
 }
 
 /**
@@ -51,7 +66,7 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
  */
 export function mergeConfig(
   defaults: Config,
-  override: Partial<Config>
+  override: Partial<Config>,
 ): Config {
   return {
     libraryBasePath: override.libraryBasePath ?? defaults.libraryBasePath,
@@ -74,10 +89,7 @@ export function mergeConfig(
  * Resolve band-specific config by looking up the artist name (lowercased)
  * in the bands map, then merging over defaults.
  */
-export function resolveBandConfig(
-  config: Config,
-  artist: string
-): BandConfig {
+export function resolveBandConfig(config: Config, artist: string): BandConfig {
   const key = artist.toLowerCase();
   const bandOverride = config.bands[key];
   if (bandOverride) {

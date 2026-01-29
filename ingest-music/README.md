@@ -164,6 +164,7 @@ Templates use `{variable}` substitution. Available variables:
 |---|---|---|
 | `{artist}` | `Phish` | Artist name |
 | `{date}` | `2024-08-16` | Show date (YYYY-MM-DD) |
+| `{date:FORMAT}` | varies | Formatted date (see below) |
 | `{venue}` | `Dick's Sporting Goods Park` | Venue name |
 | `{city}` | `Commerce City` | City |
 | `{state}` | `CO` | State code |
@@ -171,6 +172,21 @@ Templates use `{variable}` substitution. Available variables:
 | `{set}` | `1` | Set number |
 | `{track}` | `01` | Zero-padded track number within the set |
 | `{discnumber}` | `1` | Same as set number |
+
+#### Date formatting
+
+Use `{date:FORMAT}` to customize the date format. Format tokens:
+
+| Token | Description | Example |
+|---|---|---|
+| `YYYY` | 4-digit year | `2024` |
+| `MM` | 2-digit month | `08` |
+| `DD` | 2-digit day | `16` |
+
+Examples:
+- `{date:YYYY-MM-DD}` → `2024-08-16`
+- `{date:YYYY.MM.DD}` → `2024.08.16`
+- `{date:MM/DD/YYYY}` → `08/16/2024`
 
 ## Pipeline
 

@@ -6,16 +6,19 @@
   "scripts": {
     "cli": "tsx src/index.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/yauzl-promise": "^4.0.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   },
   "dependencies": {
     "@stricli/core": "^1.2.5",
+    "jq": "^1.7.2",
     "music-metadata": "^10.6.0",
     "tar": "^7.0.0",
     "yauzl-promise": "^4.0.0"

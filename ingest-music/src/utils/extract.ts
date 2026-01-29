@@ -5,8 +5,8 @@ import * as os from "node:os";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 import { open } from "yauzl-promise";
-import tar from "tar";
-import type { ProgressCallback } from "./types.js";
+import * as tar from "tar";
+import type { ProgressCallback } from "../config/types.js";
 
 const AUDIO_EXTENSIONS = new Set([".flac", ".wav", ".shn"]);
 
@@ -44,13 +44,13 @@ export function isArchive(filename: string): boolean {
  */
 export async function extractArchive(
   archivePath: string,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
 ): Promise<string> {
   const format = detectArchiveFormat(archivePath);
   if (!format) {
     throw new Error(
       `Unsupported archive format: ${path.basename(archivePath)}\n` +
-        `Supported formats: .zip, .tar.gz, .tgz, .gz`
+        `Supported formats: .zip, .tar.gz, .tgz, .gz`,
     );
   }
 
@@ -69,8 +69,8 @@ export async function extractArchive(
       break;
   }
 
-  // Flatten: move any nested audio files up to tmpDir root
-  await flattenAudioFiles(tmpDir, onProgress);
+  // Flatten: move all files up to tmpDir root
+  await flattenAllFiles(tmpDir, onProgress);
 
   return tmpDir;
 }
@@ -81,7 +81,7 @@ export async function extractArchive(
 async function extractZip(
   archivePath: string,
   destDir: string,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
 ): Promise<void> {
   const zipFile = await open(archivePath);
   try {
@@ -107,7 +107,7 @@ async function extractZip(
 async function extractTarGz(
   archivePath: string,
   destDir: string,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
 ): Promise<void> {
   onProgress?.("  Extracting tar.gz...");
   await tar.extract({ file: archivePath, cwd: destDir });
@@ -120,7 +120,7 @@ async function extractTarGz(
 async function extractGz(
   archivePath: string,
   destDir: string,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
 ): Promise<void> {
   onProgress?.("  Decompressing .gz...");
   const baseName = path.basename(archivePath, ".gz");
@@ -133,18 +133,15 @@ async function extractGz(
 }
 
 /**
- * Walk a directory tree and move all audio files to the root level.
+ * Walk a directory tree and move all files to the root level.
  * Removes emptied subdirectories afterward.
  */
-async function flattenAudioFiles(
+async function flattenAllFiles(
   dir: string,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
 ): Promise<void> {
   const allFiles = await walkDir(dir);
   for (const filePath of allFiles) {
-    const ext = path.extname(filePath).toLowerCase();
-    if (!AUDIO_EXTENSIONS.has(ext)) continue;
-
     // Already in root
     if (path.dirname(filePath) === dir) continue;
 
@@ -179,10 +176,46 @@ async function walkDir(dir: string): Promise<string[]> {
 /**
  * List audio files in a directory (non-recursive, root level only).
  */
-export async function listAudioFiles(dir: string): Promise<string[]> {
+/**
+ * Check if a filename should be excluded based on regex patterns.
+ */
+function shouldExcludeFile(filename: string, patterns: string[]): boolean {
+  const base = path.basename(filename);
+  return patterns.some((pattern) => {
+    try {
+      const regex = new RegExp(pattern);
+      return regex.test(base);
+    } catch (e) {
+      console.warn(`Invalid exclude pattern: ${pattern}`);
+      return false;
+    }
+  });
+}
+
+export async function listAudioFiles(
+  dir: string,
+  excludePatterns: string[] = []
+): Promise<string[]> {
   const entries = await fs.readdir(dir);
   return entries
+    .filter((e) => !shouldExcludeFile(e, excludePatterns))
     .filter((e) => AUDIO_EXTENSIONS.has(path.extname(e).toLowerCase()))
+    .map((e) => path.join(dir, e));
+}
+
+/**
+ * List non-audio files in a directory (non-recursive, root level only).
+ * These are supplementary files like artwork, info.txt, checksums, etc.
+ * Excludes files matching the provided exclude patterns.
+ */
+export async function listNonAudioFiles(
+  dir: string,
+  excludePatterns: string[] = []
+): Promise<string[]> {
+  const entries = await fs.readdir(dir);
+  return entries
+    .filter((e) => !shouldExcludeFile(e, excludePatterns))
+    .filter((e) => !AUDIO_EXTENSIONS.has(path.extname(e).toLowerCase()))
     .map((e) => path.join(dir, e));
 }
 

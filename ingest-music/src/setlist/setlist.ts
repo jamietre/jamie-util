@@ -5,7 +5,7 @@ import type {
   BandConfig,
   Config,
   SetlistSourceConfig,
-} from "./types.js";
+} from "../config/types.js";
 
 /**
  * Fetch a setlist by trying each configured source in order.
@@ -14,7 +14,7 @@ import type {
 export async function fetchSetlist(
   showInfo: ShowInfo,
   bandConfig: BandConfig,
-  config: Config
+  config: Config,
 ): Promise<Setlist> {
   const errors: string[] = [];
 
@@ -35,13 +35,13 @@ export async function fetchSetlist(
       }
     } catch (e) {
       errors.push(
-        `${sourceName}: ${e instanceof Error ? e.message : String(e)}`
+        `${sourceName}: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
 
   throw new Error(
-    `Failed to fetch setlist from all sources:\n${errors.map((e) => `  - ${e}`).join("\n")}`
+    `Failed to fetch setlist from all sources:\n${errors.map((e) => `  - ${e}`).join("\n")}`,
   );
 }
 
@@ -50,10 +50,9 @@ export async function fetchSetlist(
  */
 async function fetchPhishNet(
   showInfo: ShowInfo,
-  sourceConfig: SetlistSourceConfig
+  sourceConfig: SetlistSourceConfig,
 ): Promise<Setlist> {
-  const baseUrl =
-    sourceConfig.url ?? "https://api.phish.net/v5";
+  const baseUrl = sourceConfig.url ?? "https://api.phish.net/v5";
   const url = `${baseUrl}/setlists/showdate/${showInfo.date}.json?apikey=${encodeURIComponent(sourceConfig.apiKey)}`;
   const response = await fetch(url);
   if (!response.ok) {
@@ -73,10 +72,9 @@ async function fetchPhishNet(
  */
 async function fetchSetlistFm(
   showInfo: ShowInfo,
-  sourceConfig: SetlistSourceConfig
+  sourceConfig: SetlistSourceConfig,
 ): Promise<Setlist> {
-  const baseUrl =
-    sourceConfig.url ?? "https://api.setlist.fm/rest/1.0";
+  const baseUrl = sourceConfig.url ?? "https://api.setlist.fm/rest/1.0";
 
   // setlist.fm uses DD-MM-YYYY format
   const [y, m, d] = showInfo.date.split("-");
@@ -102,7 +100,7 @@ async function fetchSetlistFm(
   const data = (await response.json()) as SetlistFmSearchResponse;
   if (!data.setlist || data.setlist.length === 0) {
     throw new Error(
-      `No setlist found for ${showInfo.artist} on ${showInfo.date}`
+      `No setlist found for ${showInfo.artist} on ${showInfo.date}`,
     );
   }
 
@@ -119,14 +117,14 @@ interface PhishNetSong {
   song: string;
   set: string; // "1", "2", "3" (encore), "E", "E2"
   position: number;
-  venuename?: string;
+  venue?: string;
   city?: string;
   state?: string;
 }
 
 export function parsePhishNetResponse(
   data: PhishNetResponse,
-  showInfo: ShowInfo
+  showInfo: ShowInfo,
 ): Setlist {
   const songs: SetlistSong[] = data.data.map((item) => ({
     title: item.song,
@@ -134,18 +132,24 @@ export function parsePhishNetResponse(
     position: item.position,
   }));
 
+  // Build phish.net URL for this show
+  const setlistUrl = `https://phish.net/setlists/?d=${showInfo.date}`;
+
   return {
     artist: showInfo.artist,
     date: showInfo.date,
-    venue: data.data[0]?.venuename ?? showInfo.venue,
+    venue: data.data[0]?.venue ?? showInfo.venue,
     city: data.data[0]?.city ?? showInfo.city,
     state: data.data[0]?.state ?? showInfo.state,
     songs,
+    source: "phish.net",
+    url: setlistUrl,
   };
 }
 
 function parsePhishNetSet(set: string): number {
-  if (set === "E" || set === "E2" || set === "3") return 3;
+  const s = set.toUpperCase();
+  if (s === "E" || s === "E2" || s === "3") return 3;
   const n = parseInt(set, 10);
   return isNaN(n) ? 1 : n;
 }
@@ -157,6 +161,8 @@ interface SetlistFmSearchResponse {
 }
 
 interface SetlistFmSetlist {
+  id: string;
+  url: string;
   artist: { name: string };
   venue: { name: string; city: { name: string; stateCode: string } };
   eventDate: string;
@@ -177,7 +183,7 @@ interface SetlistFmSong {
 
 export function parseSetlistFmResponse(
   data: SetlistFmSetlist,
-  showInfo: ShowInfo
+  showInfo: ShowInfo,
 ): Setlist {
   const songs: SetlistSong[] = [];
 
@@ -193,6 +199,9 @@ export function parseSetlistFmResponse(
     }
   }
 
+  // setlist.fm provides a URL directly, or we can construct one from the ID
+  const setlistUrl = data.url ?? `https://www.setlist.fm/setlist/-/${data.id}.html`;
+
   return {
     artist: data.artist?.name ?? showInfo.artist,
     date: showInfo.date,
@@ -200,6 +209,8 @@ export function parseSetlistFmResponse(
     city: data.venue?.city?.name ?? showInfo.city,
     state: data.venue?.city?.stateCode ?? showInfo.state,
     songs,
+    source: "setlist.fm",
+    url: setlistUrl,
   };
 }
 

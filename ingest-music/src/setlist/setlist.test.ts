@@ -3,7 +3,7 @@ import {
   parsePhishNetResponse,
   parseSetlistFmResponse,
 } from "./setlist.js";
-import type { ShowInfo } from "./types.js";
+import type { ShowInfo } from "../config/types.js";
 
 const showInfo: ShowInfo = {
   artist: "Phish",
@@ -45,7 +45,7 @@ describe("parsePhishNetResponse", () => {
   it("uses venue info from API when available", () => {
     const data = {
       data: [
-        { song: "Song", set: "1", position: 1, venuename: "API Venue", city: "API City", state: "NY" },
+        { song: "Song", set: "1", position: 1, venue: "API Venue", city: "API City", state: "NY" },
       ],
     };
     const result = parsePhishNetResponse(data, showInfo);
@@ -69,11 +69,22 @@ describe("parsePhishNetResponse", () => {
     const result = parsePhishNetResponse(data, showInfo);
     expect(result.songs[0].set).toBe(3);
   });
+
+  it("includes source and URL", () => {
+    const data = {
+      data: [{ song: "Song", set: "1", position: 1 }],
+    };
+    const result = parsePhishNetResponse(data, showInfo);
+    expect(result.source).toBe("phish.net");
+    expect(result.url).toBe("https://phish.net/setlists/?d=2024-08-16");
+  });
 });
 
 describe("parseSetlistFmResponse", () => {
   it("parses multi-set show with encore", () => {
     const data = {
+      id: "abc123",
+      url: "https://www.setlist.fm/setlist/king-gizzard/2024/abc123.html",
       artist: { name: "King Gizzard" },
       venue: {
         name: "Forest Hills Stadium",
@@ -126,6 +137,8 @@ describe("parseSetlistFmResponse", () => {
 
   it("falls back to showInfo when API data is missing", () => {
     const data = {
+      id: "xyz789",
+      url: "",
       artist: undefined as any,
       venue: undefined as any,
       eventDate: "16-08-2024",
@@ -134,5 +147,22 @@ describe("parseSetlistFmResponse", () => {
     const result = parseSetlistFmResponse(data, showInfo);
     expect(result.artist).toBe("Phish");
     expect(result.venue).toBe("Dick's Sporting Goods Park");
+  });
+
+  it("includes source and URL", () => {
+    const data = {
+      id: "abc123",
+      url: "https://www.setlist.fm/setlist/king-gizzard/2024/abc123.html",
+      artist: { name: "King Gizzard" },
+      venue: {
+        name: "Forest Hills Stadium",
+        city: { name: "Queens", stateCode: "NY" },
+      },
+      eventDate: "16-08-2024",
+      sets: { set: [] },
+    };
+    const result = parseSetlistFmResponse(data, showInfo);
+    expect(result.source).toBe("setlist.fm");
+    expect(result.url).toBe("https://www.setlist.fm/setlist/king-gizzard/2024/abc123.html");
   });
 });

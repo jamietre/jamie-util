@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { ProgressCallback } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -31,20 +30,16 @@ const REQUIRED_TOOLS: RequiredTool[] = [
 
 /**
  * Verify all required external tools are available on the system.
- * Throws with detailed install instructions on first missing tool.
+ * Throws with detailed install instructions if any are missing.
+ * Silent on success.
  */
-export async function verifyRequiredTools(
-  onProgress?: ProgressCallback
-): Promise<void> {
-  onProgress?.("Checking required tools...");
+export async function verifyRequiredTools(): Promise<void> {
   const missing: RequiredTool[] = [];
 
   for (const tool of REQUIRED_TOOLS) {
     try {
       await execFileAsync(tool.command, [tool.versionFlag]);
-      onProgress?.(`  ${tool.command}: found`);
     } catch {
-      onProgress?.(`  ${tool.command}: MISSING`);
       missing.push(tool);
     }
   }
@@ -60,6 +55,4 @@ export async function verifyRequiredTools(
       `Missing required tool(s):\n\n${details}`
     );
   }
-
-  onProgress?.("All required tools found.\n");
 }

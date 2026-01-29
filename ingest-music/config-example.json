@@ -17,7 +17,19 @@
     "genre": "Live",
     "targetPathTemplate": "{artist}/{date} - {venue}, {city}, {state}",
     "fileNameTemplate": "{date} S{set} T{track} - {title}.flac",
-    "encoreInSet2": true
+    "fileNameTemplateSingleSet": "{date} T{track} - {title}.flac",
+    "encoreInSet2": true,
+    "conversion": {
+      "flac": {
+        "compressionLevel": 8
+      }
+    },
+    "excludePatterns": [
+      "^\\._",
+      "^\\.DS_Store$",
+      "^Thumbs\\.db$",
+      "^\\."
+    ]
   },
   "bands": {
     "phish": {

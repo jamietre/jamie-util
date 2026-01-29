@@ -13,6 +13,13 @@ export interface SetlistSourceConfig {
   url?: string; // Optional override for the API base URL
 }
 
+/** Conversion configuration */
+export interface ConversionConfig {
+  flac?: {
+    compressionLevel?: number; // 0-12, default 8
+  };
+}
+
 /** Per-band configuration, merged with defaults */
 export interface BandConfig {
   setlistSources: string[]; // e.g. ["phish.net", "setlist.fm"] — tried in order
@@ -21,7 +28,11 @@ export interface BandConfig {
   genre: string;
   targetPathTemplate: string;
   fileNameTemplate: string;
+  fileNameTemplateSingleSet?: string; // Optional template for single-set shows
   encoreInSet2: boolean;
+  conversion?: ConversionConfig;
+  /** Regex patterns for files to exclude (e.g., macOS resource forks, system files) */
+  excludePatterns?: string[];
 }
 
 /** Top-level config file schema */
@@ -38,6 +49,7 @@ export interface AudioInfo {
   bitsPerSample: number | undefined;
   sampleRate: number | undefined;
   trackNumber: number | undefined;
+  discNumber: number | undefined;
   title: string | undefined;
   duration: number | undefined;
 }
@@ -57,6 +69,10 @@ export interface Setlist {
   city: string;
   state: string;
   songs: SetlistSong[];
+  /** Which API source provided this setlist */
+  source: string;
+  /** URL to view the setlist online */
+  url: string;
 }
 
 /** A matched track: audio file paired with setlist song */
