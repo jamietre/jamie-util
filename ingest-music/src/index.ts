@@ -15,6 +15,7 @@ interface IngestFlags {
   "dry-run": boolean;
   "skip-conversion": boolean;
   split?: string[];
+  merge?: string[];
 }
 
 const ingestCommand = buildCommand({
@@ -94,6 +95,13 @@ const ingestCommand = buildCommand({
       split: {
         kind: "parsed",
         brief: "Split track at timestamp (format: S2T17 12:22 or 2-17 12:22:00). Can be specified multiple times.",
+        parse: String,
+        variadic: true,
+        optional: true,
+      },
+      merge: {
+        kind: "parsed",
+        brief: "Merge sequential tracks (format: S1T01 S1T02 S1T03 or 1 2 3). Can be specified multiple times.",
         parse: String,
         variadic: true,
         optional: true,

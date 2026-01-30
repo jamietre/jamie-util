@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseSplitSpec } from "./split.js";
+import { parseSplitSpec, parseMergeSpec } from "./split.js";
 
 describe("parseSplitSpec", () => {
   it("parses S2T17 format with HH:MM:SS", () => {
@@ -77,5 +77,76 @@ describe("parseSplitSpec", () => {
   it("handles fractional seconds", () => {
     const result = parseSplitSpec("S1T1 742.5");
     expect(result.timestamp).toBe(742.5);
+  });
+});
+
+describe("parseMergeSpec", () => {
+  it("parses S1T01 S1T02 format", () => {
+    const result = parseMergeSpec("S1T01 S1T02 S1T03");
+    expect(result).toEqual({
+      tracks: [
+        { set: 1, track: 1 },
+        { set: 1, track: 2 },
+        { set: 1, track: 3 },
+      ],
+    });
+  });
+
+  it("parses D1T01 D1T02 format (D for disc)", () => {
+    const result = parseMergeSpec("D1T01 D1T02");
+    expect(result).toEqual({
+      tracks: [
+        { set: 1, track: 1 },
+        { set: 1, track: 2 },
+      ],
+    });
+  });
+
+  it("parses simple number format", () => {
+    const result = parseMergeSpec("1 2 3");
+    expect(result).toEqual({
+      tracks: [
+        { set: 1, track: 1 },
+        { set: 1, track: 2 },
+        { set: 1, track: 3 },
+      ],
+    });
+  });
+
+  it("is case-insensitive", () => {
+    const result = parseMergeSpec("s1t01 s1t02");
+    expect(result).toEqual({
+      tracks: [
+        { set: 1, track: 1 },
+        { set: 1, track: 2 },
+      ],
+    });
+  });
+
+  it("throws on single track", () => {
+    expect(() => parseMergeSpec("S1T01")).toThrow(
+      "Expected at least 2 tracks"
+    );
+  });
+
+  it("throws on empty string", () => {
+    expect(() => parseMergeSpec("")).toThrow("Expected at least 2 tracks");
+  });
+
+  it("throws on invalid track identifier", () => {
+    expect(() => parseMergeSpec("S1T01 invalid S1T03")).toThrow(
+      "Invalid track identifier"
+    );
+  });
+
+  it("handles mixed valid formats", () => {
+    const result = parseMergeSpec("S1T01 1 2");
+    expect(result).toEqual({
+      tracks: [
+        { set: 1, track: 1 },
+        { set: 1, track: 1 },
+        { set: 1, track: 2 },
+      ],
+    });
   });
 });

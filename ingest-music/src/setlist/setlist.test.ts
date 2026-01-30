@@ -140,6 +140,27 @@ describe("parsePhishNetSetlistResponse", () => {
     expect(result.source).toBe("phish.net");
     expect(result.url).toBe("https://phish.net/setlists/?d=2024-08-16");
   });
+
+  it("includes country when provided by API", () => {
+    const show = {
+      showid: "123",
+      showdate: "2024-08-16",
+      country: "USA",
+    };
+    const songs = [{ song: "Song", set: "1", position: 1 }];
+    const result = parsePhishNetSetlistResponse(show, songs, showInfo);
+    expect(result.country).toBe("USA");
+  });
+
+  it("handles missing country gracefully", () => {
+    const show = {
+      showid: "123",
+      showdate: "2024-08-16",
+    };
+    const songs = [{ song: "Song", set: "1", position: 1 }];
+    const result = parsePhishNetSetlistResponse(show, songs, showInfo);
+    expect(result.country).toBeUndefined();
+  });
 });
 
 describe("parsePhishNetShowResponse (legacy)", () => {

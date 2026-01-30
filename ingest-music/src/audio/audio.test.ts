@@ -4,10 +4,11 @@ import type { AudioInfo } from "../config/types.js";
 
 function makeInfo(
   bitsPerSample: number | undefined,
-  sampleRate: number | undefined
+  sampleRate: number | undefined,
+  extension = ".flac"
 ): AudioInfo {
   return {
-    filePath: "/tmp/test.flac",
+    filePath: `/tmp/test${extension}`,
     bitsPerSample,
     sampleRate,
     trackNumber: undefined,
@@ -40,5 +41,27 @@ describe("needsConversion", () => {
 
   it("returns false when both are undefined", () => {
     expect(needsConversion(makeInfo(undefined, undefined))).toBe(false);
+  });
+
+  it("returns true for WAV at 16-bit/44.1kHz (needs FLAC conversion)", () => {
+    expect(needsConversion(makeInfo(16, 44100, ".wav"))).toBe(true);
+  });
+
+  it("returns true for WAV at 16-bit/48kHz (needs FLAC conversion)", () => {
+    expect(needsConversion(makeInfo(16, 48000, ".wav"))).toBe(true);
+  });
+
+  it("returns true for SHN at 16-bit/44.1kHz (needs FLAC conversion)", () => {
+    expect(needsConversion(makeInfo(16, 44100, ".shn"))).toBe(true);
+  });
+
+  it("returns true for WAV at 24-bit/96kHz (needs bit depth, sample rate, and FLAC conversion)", () => {
+    expect(needsConversion(makeInfo(24, 96000, ".wav"))).toBe(true);
+  });
+
+  it("returns false for lossy formats (MP3, AAC, OGG) - should not convert", () => {
+    expect(needsConversion(makeInfo(16, 44100, ".mp3"))).toBe(false);
+    expect(needsConversion(makeInfo(16, 48000, ".aac"))).toBe(false);
+    expect(needsConversion(makeInfo(16, 44100, ".ogg"))).toBe(false);
   });
 });

@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import * as path from "node:path";
-import type { TrackSplit, ProgressCallback } from "../config/types.js";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import type { TrackSplit, TrackMerge, ProgressCallback } from "../config/types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -209,6 +211,208 @@ export async function applySplitsToFiles(
         `  Error splitting track ${split.track}: ${msg}`
       );
       // Continue with other splits even if one fails
+    }
+  }
+
+  return updatedPaths;
+}
+
+// --- Track Merging ---
+
+/**
+ * Parse a merge specification string into a TrackMerge object.
+ * Supports formats:
+ * - "S1T01 S1T02 S1T03" (set 1, tracks 1-3)
+ * - "D1T01 D1T02" (alternative format with D for disc)
+ * - "1 2 3" (simple track numbers, assumes same set)
+ */
+export function parseMergeSpec(spec: string): TrackMerge {
+  const parts = spec.trim().split(/\s+/);
+  if (parts.length < 2) {
+    throw new Error(`Invalid merge specification: "${spec}". Expected at least 2 tracks like "S1T01 S1T02"`);
+  }
+
+  const tracks: Array<{ set: number; track: number }> = [];
+
+  for (const part of parts) {
+    // Try S1T01 format
+    const setTrackMatch = part.match(/^[SD](\d+)T(\d+)$/i);
+    if (setTrackMatch) {
+      tracks.push({
+        set: parseInt(setTrackMatch[1], 10),
+        track: parseInt(setTrackMatch[2], 10),
+      });
+      continue;
+    }
+
+    // Try simple number format
+    const numMatch = part.match(/^(\d+)$/);
+    if (numMatch) {
+      tracks.push({
+        set: 1, // Default to set 1 for simple numbers
+        track: parseInt(numMatch[1], 10),
+      });
+      continue;
+    }
+
+    throw new Error(`Invalid track identifier in merge spec: "${part}". Use "S1T01" or number format.`);
+  }
+
+  return { tracks };
+}
+
+/**
+ * Validate that tracks are sequential (consecutive track numbers in same set).
+ */
+function validateSequentialTracks(merge: TrackMerge): void {
+  const { tracks } = merge;
+
+  // Check all tracks are in same set
+  const sets = new Set(tracks.map((t) => t.set));
+  if (sets.size > 1) {
+    throw new Error(
+      `Cannot merge tracks from different sets: ${Array.from(sets).join(", ")}`
+    );
+  }
+
+  // Check tracks are consecutive
+  const trackNumbers = tracks.map((t) => t.track).sort((a, b) => a - b);
+  for (let i = 1; i < trackNumbers.length; i++) {
+    if (trackNumbers[i] !== trackNumbers[i - 1] + 1) {
+      throw new Error(
+        `Tracks must be sequential. Gap found between ${trackNumbers[i - 1]} and ${trackNumbers[i]}`
+      );
+    }
+  }
+}
+
+/**
+ * Merge multiple audio files into one using ffmpeg concat.
+ * Returns the path to the merged file.
+ */
+async function mergeAudioFiles(
+  inputPaths: string[],
+  outputPath: string,
+  onProgress?: ProgressCallback
+): Promise<string> {
+  // Create a concat list file for ffmpeg
+  const tmpDir = path.dirname(outputPath);
+  const concatFile = path.join(tmpDir, `concat-${Date.now()}.txt`);
+
+  try {
+    // Write concat file with format: file '/path/to/file.flac'
+    const concatContent = inputPaths
+      .map((p) => `file '${p.replace(/'/g, "'\\''")}'`) // Escape single quotes
+      .join("\n");
+    await fs.writeFile(concatFile, concatContent, "utf-8");
+
+    onProgress?.(
+      `    Merging ${inputPaths.length} files: ${inputPaths.map(p => path.basename(p)).join(", ")}`
+    );
+
+    // Use ffmpeg concat demuxer for lossless concatenation
+    await execFileAsync("ffmpeg", [
+      "-f", "concat",
+      "-safe", "0",
+      "-i", concatFile,
+      "-c", "copy", // Copy streams without re-encoding
+      "-y", outputPath,
+    ]);
+
+    return outputPath;
+  } finally {
+    // Clean up concat file
+    await fs.unlink(concatFile).catch(() => {
+      // Ignore errors during cleanup
+    });
+  }
+}
+
+/**
+ * Apply track merges to audio file paths.
+ * Merges specified files and returns an updated file list.
+ * This should be called BEFORE analyzing audio files.
+ */
+export async function applyMergesToFiles(
+  filePaths: string[],
+  merges: TrackMerge[],
+  onProgress?: ProgressCallback
+): Promise<string[]> {
+  if (merges.length === 0) {
+    return filePaths;
+  }
+
+  onProgress?.(`\nApplying ${merges.length} track merge(s)...`);
+
+  let updatedPaths = [...filePaths];
+
+  // Process merges in reverse order of first track to avoid index shifting
+  const sortedMerges = [...merges].sort((a, b) => {
+    const aFirst = a.tracks[0];
+    const bFirst = b.tracks[0];
+    if (aFirst.set !== bFirst.set) return bFirst.set - aFirst.set;
+    return bFirst.track - aFirst.track;
+  });
+
+  for (const merge of sortedMerges) {
+    try {
+      // Validate tracks are sequential
+      validateSequentialTracks(merge);
+
+      // Find file indices for all tracks in the merge
+      const firstTrack = merge.tracks[0];
+      const firstIndex = firstTrack.track - 1; // Convert 1-based to 0-based
+
+      if (firstIndex < 0 || firstIndex >= updatedPaths.length) {
+        onProgress?.(
+          `  Warning: Track ${firstTrack.track} out of range (only ${updatedPaths.length} files), skipping merge`
+        );
+        continue;
+      }
+
+      // Get all files to merge
+      const filesToMerge: string[] = [];
+      for (const track of merge.tracks) {
+        const idx = track.track - 1;
+        if (idx >= updatedPaths.length) {
+          throw new Error(
+            `Track ${track.track} out of range (only ${updatedPaths.length} files)`
+          );
+        }
+        filesToMerge.push(updatedPaths[idx]);
+      }
+
+      onProgress?.(
+        `  Merging tracks ${merge.tracks.map(t => t.track).join(", ")}`
+      );
+
+      // Create merged file path
+      const firstFile = filesToMerge[0];
+      const dir = path.dirname(firstFile);
+      const ext = path.extname(firstFile);
+      const base = path.basename(firstFile, ext);
+      const mergedPath = path.join(dir, `${base}_merged${ext}`);
+
+      // Merge the files
+      await mergeAudioFiles(filesToMerge, mergedPath, onProgress);
+
+      // Update file list: remove individual files, add merged file
+      const lastTrackIdx = merge.tracks[merge.tracks.length - 1].track - 1;
+      updatedPaths.splice(
+        firstIndex,
+        lastTrackIdx - firstIndex + 1,
+        mergedPath
+      );
+
+      onProgress?.(
+        `    Created: ${path.basename(mergedPath)}`
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      onProgress?.(
+        `  Error merging tracks: ${msg}`
+      );
+      // Continue with other merges even if one fails
     }
   }
 

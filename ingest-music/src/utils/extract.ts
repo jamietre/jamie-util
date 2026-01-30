@@ -8,8 +8,10 @@ import { open } from "yauzl-promise";
 import * as tar from "tar";
 import { createExtractorFromFile } from "node-unrar-js";
 import type { ProgressCallback } from "../config/types.js";
+import { naturalCompare } from "../matching/match.js";
+import { getAudioExtensions } from "../audio/formats.js";
 
-const AUDIO_EXTENSIONS = new Set([".flac", ".wav", ".shn"]);
+const AUDIO_EXTENSIONS = getAudioExtensions();
 
 /** Supported archive extensions and their format identifiers */
 type ArchiveFormat = "zip" | "tar.gz" | "gz" | "rar";
@@ -278,23 +280,46 @@ export async function listAudioFiles(
     .filter((e) => AUDIO_EXTENSIONS.has(path.extname(e).toLowerCase()))
     // Exclude temporary conversion files (artifacts from previous runs)
     .filter((e) => !e.endsWith("_converted.flac"))
+    .sort(naturalCompare) // Natural sort: "2.flac" before "10.flac"
     .map((e) => path.join(dir, e));
 }
 
 /**
- * List non-audio files in a directory (non-recursive, root level only).
+ * List non-audio files in a directory recursively.
  * These are supplementary files like artwork, info.txt, checksums, etc.
  * Excludes files matching the provided exclude patterns.
+ * Returns relative paths from the base directory.
  */
 export async function listNonAudioFiles(
   dir: string,
   excludePatterns: string[] = []
-): Promise<string[]> {
-  const entries = await fs.readdir(dir);
-  return entries
-    .filter((e) => !shouldExcludeFile(e, excludePatterns))
-    .filter((e) => !AUDIO_EXTENSIONS.has(path.extname(e).toLowerCase()))
-    .map((e) => path.join(dir, e));
+): Promise<Array<{ fullPath: string; relativePath: string }>> {
+  const results: Array<{ fullPath: string; relativePath: string }> = [];
+
+  async function walk(currentDir: string, relativePath: string = ""): Promise<void> {
+    const entries = await fs.readdir(currentDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const entryRelative = relativePath ? path.join(relativePath, entry.name) : entry.name;
+      const entryFull = path.join(currentDir, entry.name);
+
+      // Skip excluded patterns
+      if (shouldExcludeFile(entry.name, excludePatterns)) {
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        // Recurse into subdirectories
+        await walk(entryFull, entryRelative);
+      } else if (!AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+        // Non-audio file - include it
+        results.push({ fullPath: entryFull, relativePath: entryRelative });
+      }
+    }
+  }
+
+  await walk(dir);
+  return results.sort((a, b) => naturalCompare(a.relativePath, b.relativePath));
 }
 
 /**

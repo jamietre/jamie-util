@@ -10,14 +10,19 @@ import {
   ruleRequiresConversion,
   type ConversionRule,
 } from "../config/conversion-rules.js";
+import { validateAudioFormat } from "./formats.js";
 
 const execFileAsync = promisify(execFile);
 
 /**
  * Analyze an audio file using music-metadata.
  * Returns audio properties and any existing tags.
+ * Throws an error if the audio format is unknown.
  */
 export async function analyzeAudio(filePath: string): Promise<AudioInfo> {
+  // Validate that we know this format
+  validateAudioFormat(filePath);
+
   const metadata = await parseFile(filePath);
 
   return {

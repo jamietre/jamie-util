@@ -1,4 +1,13 @@
+import * as path from "node:path";
 import type { AudioInfo } from "./types.js";
+import { isLosslessFormat } from "../audio/formats.js";
+
+/**
+ * Check if an audio file is already in FLAC format.
+ */
+function isFlac(audio: AudioInfo): boolean {
+  return path.extname(audio.filePath).toLowerCase() === ".flac";
+}
 
 /**
  * Defines a rule for when and how to convert audio files.
@@ -107,26 +116,64 @@ export const CONVERSION_RULES: ConversionRule[] = [
   },
 
   {
-    name: "Keep CD quality as-is",
-    description: "16-bit/44.1kHz files (CD quality) don't need conversion",
+    name: "Keep CD quality FLAC as-is",
+    description: "16-bit/44.1kHz FLAC files (CD quality) don't need conversion",
     matches: (audio) => {
       const bits = audio.bitsPerSample ?? 16;
       const rate = audio.sampleRate ?? 44100;
-      return bits === 16 && rate === 44100;
+      return isFlac(audio) && bits === 16 && rate === 44100;
     },
     target: {},
     ffmpegOptions: {},
   },
 
   {
-    name: "Keep 16/48 as-is",
-    description: "16-bit/48kHz files are already at target quality",
+    name: "Keep 16/48 FLAC as-is",
+    description: "16-bit/48kHz FLAC files are already at target quality",
     matches: (audio) => {
       const bits = audio.bitsPerSample ?? 16;
       const rate = audio.sampleRate ?? 48000;
-      return bits === 16 && rate === 48000;
+      return isFlac(audio) && bits === 16 && rate === 48000;
     },
     target: {},
+    ffmpegOptions: {},
+  },
+
+  {
+    name: "Keep lossy formats as-is",
+    description: "Lossy formats (MP3, AAC, OGG, etc.) cannot be improved by conversion - keep as-is",
+    matches: (audio) => {
+      return !isLosslessFormat(audio.filePath);
+    },
+    target: {},
+    ffmpegOptions: {},
+  },
+
+  {
+    name: "Convert lossless non-FLAC to FLAC (CD quality)",
+    description: "Convert lossless formats (WAV/SHN/APE/etc.) at 16-bit/44.1kHz to FLAC",
+    matches: (audio) => {
+      const bits = audio.bitsPerSample ?? 16;
+      const rate = audio.sampleRate ?? 44100;
+      return !isFlac(audio) && isLosslessFormat(audio.filePath) && bits === 16 && rate === 44100;
+    },
+    target: {
+      codec: "flac",
+    },
+    ffmpegOptions: {},
+  },
+
+  {
+    name: "Convert lossless non-FLAC to FLAC (16/48)",
+    description: "Convert lossless formats (WAV/SHN/APE/etc.) at 16-bit/48kHz to FLAC",
+    matches: (audio) => {
+      const bits = audio.bitsPerSample ?? 16;
+      const rate = audio.sampleRate ?? 48000;
+      return !isFlac(audio) && isLosslessFormat(audio.filePath) && bits === 16 && rate === 48000;
+    },
+    target: {
+      codec: "flac",
+    },
     ffmpegOptions: {},
   },
 ];

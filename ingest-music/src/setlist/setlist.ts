@@ -178,6 +178,7 @@ interface PhishNetShow {
   venue?: string;
   city?: string;
   state?: string;
+  country?: string;
 }
 
 interface PhishNetSetlistResponse {
@@ -213,6 +214,7 @@ export function parsePhishNetSetlistResponse(
     venue: show.venuename ?? show.venue ?? showInfo.venue,
     city: show.city ?? showInfo.city,
     state: show.state ?? showInfo.state,
+    country: show.country,
     songs: setlistSongs,
     source: "phish.net",
     url: setlistUrl,
@@ -240,6 +242,7 @@ export function parsePhishNetShowResponse(
     venue: show.venuename ?? show.venue ?? showInfo.venue,
     city: show.city ?? showInfo.city,
     state: show.state ?? showInfo.state,
+    country: show.country,
     songs,
     source: "phish.net",
     url: setlistUrl,

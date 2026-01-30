@@ -19,7 +19,7 @@ import { parseZipFilename } from "./matching/parse-filename.js";
 import { extractArchive, listAudioFiles, listNonAudioFiles, cleanupTempDir, isArchive } from "./utils/extract.js";
 import { verifyRequiredTools } from "./utils/startup.js";
 import { analyzeAllAudio, convertAllIfNeeded } from "./audio/audio.js";
-import { applySplitsToFiles, parseSplitSpec } from "./audio/split.js";
+import { applySplitsToFiles, parseSplitSpec, applyMergesToFiles, parseMergeSpec } from "./audio/split.js";
 import { fetchSetlist } from "./setlist/setlist.js";
 import { matchTracks } from "./matching/match.js";
 import { tagAllTracks, buildTemplateVars } from "./output/tagger.js";
@@ -280,10 +280,48 @@ async function processSingleArchive(
     }
     onProgress(`\nFound ${audioFiles.length} audio file(s)`);
 
-    // Step 5: Apply track splits if specified (BEFORE analyzing)
-    if (flags.split && flags.split.length > 0) {
+    // Step 5: If merging or splitting is needed and we're in a source directory (not temp),
+    // copy to temp first to avoid modifying user's files
+    const needsMerge = flags.merge && flags.merge.length > 0;
+    const needsSplit = flags.split && flags.split.length > 0;
+    if ((needsMerge || needsSplit) && !workingDir.shouldCleanup) {
+      onProgress("\nCopying to temp directory for merging/splitting...");
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ingest-music-"));
+
+      // Copy all files to temp
+      for (const audioFile of audioFiles) {
+        const destPath = path.join(tmpDir, path.basename(audioFile));
+        onProgress(`  Copying: ${path.basename(audioFile)}`);
+        await fs.copyFile(audioFile, destPath);
+      }
+
+      // Update paths and working directory
+      audioFiles = audioFiles.map(f => path.join(tmpDir, path.basename(f)));
+      workingDir.path = tmpDir;
+      workingDir.shouldCleanup = true;
+    }
+
+    // Step 6a: Apply track merges if specified (BEFORE splits and analysis)
+    if (needsMerge) {
       try {
-        const splits = flags.split.map(parseSplitSpec);
+        const merges = flags.merge!.map(parseMergeSpec);
+        audioFiles = await applyMergesToFiles(
+          audioFiles,
+          merges,
+          onProgress
+        );
+        onProgress(`After merges: ${audioFiles.length} audio file(s)`);
+      } catch (error) {
+        throw new Error(
+          `Failed to apply track merges: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+
+    // Step 6b: Apply track splits if specified (AFTER merges, BEFORE analysis)
+    if (needsSplit) {
+      try {
+        const splits = flags.split!.map(parseSplitSpec);
         audioFiles = await applySplitsToFiles(
           audioFiles,
           splits,
@@ -297,11 +335,11 @@ async function processSingleArchive(
       }
     }
 
-    // Step 6: Analyze audio files (including any split parts)
+    // Step 7: Analyze audio files (including any merged/split parts)
     onProgress("\nAnalyzing audio...");
     let audioInfos = await analyzeAllAudio(audioFiles, onProgress);
 
-    // Step 7: Convert if needed (creates temp dir if needed)
+    // Step 8: Convert if needed (creates temp dir if needed)
     onProgress("\nChecking conversion requirements...");
     const conversionResult = await convertAllIfNeeded(
       audioInfos,
@@ -314,7 +352,7 @@ async function processSingleArchive(
     // Update working directory if conversion created a temp dir
     Object.assign(workingDir, conversionResult.workingDir);
 
-    // Step 8: Match tracks to setlist
+    // Step 9: Match tracks to setlist
     onProgress("\nMatching tracks to setlist...");
     const matched = matchTracks(
       audioInfos,
@@ -362,7 +400,7 @@ async function processSingleArchive(
       }
     }
 
-    // Step 9: Interactive confirmation
+    // Step 10: Interactive confirmation
     if (!flags["dry-run"] && !flags.batch) {
       const confirmed = await confirmContinue();
       if (!confirmed) {
@@ -419,12 +457,12 @@ async function processSingleArchive(
       });
     }
 
-    // Step 10: Tag FLAC files
+    // Step 11: Tag FLAC files
     onProgress("\nTagging files...");
     printTagsSummary(matched, showInfo, bandConfig, onProgress);
     await tagAllTracks(matched, showInfo, bandConfig, onProgress);
 
-    // Step 11: Copy to library
+    // Step 12: Copy to library
     onProgress(`\nCopying to library: ${targetDir}`);
     await copyToLibrary(matched, showInfo, bandConfig, targetDir, onProgress);
 
@@ -457,7 +495,7 @@ async function processSingleArchive(
       dryRun: false,
     };
   } finally {
-    // Step 12: Clean up temp directory (only if we created one)
+    // Step 13: Clean up temp directory (only if we created one)
     if (workingDir.shouldCleanup) {
       onProgress("\nCleaning up temp directory...");
       await cleanupTempDir(workingDir.path);
@@ -512,7 +550,7 @@ function printDryRun(
   showInfo: ShowInfo,
   bandConfig: BandConfig,
   targetDir: string,
-  nonAudioFiles: string[],
+  nonAudioFiles: Array<{ fullPath: string; relativePath: string }>,
   onProgress: ProgressCallback
 ): void {
   const fileNameTemplate = getFileNameTemplate(matched, bandConfig);
@@ -526,7 +564,7 @@ function printDryRun(
   if (nonAudioFiles.length > 0) {
     onProgress("\nSupplementary files that would be copied:");
     for (const f of nonAudioFiles) {
-      onProgress(`  ${path.join(targetDir, path.basename(f))}`);
+      onProgress(`  ${path.join(targetDir, f.relativePath)}`);
     }
   }
   onProgress(`\nLog file: ${path.join(targetDir, "ingest-log.md")}`);
@@ -562,25 +600,28 @@ async function copyToLibrary(
 }
 
 async function copyNonAudioFiles(
-  files: string[],
+  files: Array<{ fullPath: string; relativePath: string }>,
   targetDir: string,
   onProgress: ProgressCallback
 ): Promise<void> {
-  for (const filePath of files) {
-    const fileName = path.basename(filePath);
-    const destPath = path.join(targetDir, fileName);
+  for (const file of files) {
+    const destPath = path.join(targetDir, file.relativePath);
+    const destDir = path.dirname(destPath);
+
+    // Create directory structure if needed
+    await fs.mkdir(destDir, { recursive: true });
 
     // Never overwrite existing files
     try {
       await fs.access(destPath);
-      onProgress(`  SKIP (exists): ${fileName}`);
+      onProgress(`  SKIP (exists): ${file.relativePath}`);
       continue;
     } catch {
       // File doesn't exist — proceed
     }
 
-    onProgress(`  Copying: ${fileName}`);
-    await fs.copyFile(filePath, destPath);
+    onProgress(`  Copying: ${file.relativePath}`);
+    await fs.copyFile(file.fullPath, destPath);
   }
 }
 

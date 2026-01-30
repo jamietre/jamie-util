@@ -106,6 +106,7 @@ export interface CliFlags {
   "dry-run": boolean;
   "skip-conversion": boolean;
   split?: string[]; // Track split specifications (e.g., "S2T17 12:22:00")
+  merge?: string[]; // Track merge specifications (e.g., "S1T01 S1T02 S1T03")
 }
 
 /** Parsed track split specification */
@@ -113,6 +114,11 @@ export interface TrackSplit {
   set: number;
   track: number;
   timestamp: number; // Time in seconds where to split
+}
+
+/** Parsed track merge specification */
+export interface TrackMerge {
+  tracks: Array<{ set: number; track: number }>; // Sequential tracks to merge
 }
 
 /** Result of processing a single zip */

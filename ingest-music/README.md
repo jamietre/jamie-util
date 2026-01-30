@@ -74,6 +74,8 @@ FLAGS
      --skip-conversion   Skip audio format conversion
      --split             Split track at timestamp (e.g., S2T17 12:22 or 2-17 12:22:00)
                          Can be specified multiple times for multiple splits
+     --merge             Merge sequential tracks (e.g., S1T01 S1T02 S1T03 or 1 2 3)
+                         Can be specified multiple times for multiple merges
   -h --help              Print help information and exit
   -v --version           Print version information and exit
 
@@ -91,6 +93,32 @@ ARGUMENTS
 - For directories: files are only copied to temp if needed (for conversion or tagging)
 - If conversion is needed, files are transcoded directly to temp (no unnecessary copying)
 - Your original files are never modified
+
+### Supported audio formats
+
+The tool recognizes both lossless and lossy audio formats:
+
+**Lossless formats** (converted to FLAC if needed):
+- FLAC, WAV, Shorten (.shn), APE, ALAC, M4A, AIFF
+
+**Lossy formats** (kept as-is):
+- MP3, AAC, OGG, Opus, WMA
+
+**Important:**
+- Only **lossless** formats are converted to FLAC (converting lossy to lossless doesn't improve quality)
+- Lossy formats are **preserved as-is** - no conversion is performed
+- Unknown formats will **fail with an error** listing supported formats
+- All formats must pass validation before processing
+
+### Supplementary files
+
+All non-audio files are automatically copied to the library alongside the audio files:
+- **Directory structure is preserved** - subdirectories and their contents are copied recursively
+- **Examples**: artwork (jpg, png), info.txt, checksums (md5, ffp), notes.md, etc.
+- **Excluded files**: Files matching your `excludePatterns` config are skipped
+- **Never overwrites**: If a file already exists in the target, it's skipped
+
+This ensures you get the complete show package in your library, not just the audio files.
 
 ## Configuration
 
@@ -385,13 +413,16 @@ pnpm cli \
 
 ### How It Works
 
-1. **Before** audio analysis, splits are applied to file paths based on file position
-2. The Nth file in the sorted list is split into two files using `ffmpeg -c copy` (fast, no re-encoding)
-3. The file list is updated with both split parts
-4. All files (including split parts) are analyzed and matched to the setlist
-5. Files are tagged and copied to the library
+1. If processing a directory (not an archive) and splitting is needed, files are first copied to a temporary directory to preserve the originals
+2. **Before** audio analysis, splits are applied to file paths based on file position
+3. The Nth file in the sorted list is split into two files using `ffmpeg -c copy` (fast, no re-encoding)
+4. The file list is updated with both split parts
+5. All files (including split parts) are analyzed and matched to the setlist
+6. Files are tagged and copied to the library
 
-**Important:** Track numbers refer to **file position** in the sorted file list, not metadata tags. `S2T16` means "split the 16th file", regardless of what TRACKNUMBER tag it has.
+**Important:**
+- Track numbers refer to **file position** in the sorted file list, not metadata tags. `S2T16` means "split the 16th file", regardless of what TRACKNUMBER tag it has.
+- Your original files are never modified - splits are always performed in a temporary directory when processing a directory directly.
 
 **Example:**
 ```bash
@@ -413,6 +444,78 @@ pnpm cli \
 track_16_part1.flac → "You Enjoy Myself"
 track_16_part2.flac → "The Little Drummer Boy"
 track_17.flac       → "Contact"
+```
+
+## Track Merging
+
+Sometimes tapers split songs more than the official setlist. For example:
+- **Taper's split**: Track 1: "Tweezer" (10:00), Track 2: "Tweezer (cont.)" (5:00)
+- **Official setlist**: Track 1: "Tweezer" (15:00)
+
+Use `--merge` to combine sequential tracks into one to match the official setlist:
+
+```bash
+pnpm cli --merge "S1T01 S1T02" phish-2024-08-16.zip
+```
+
+### Merge Format
+
+```
+--merge <track-list>
+```
+
+**Track list formats:**
+- `S1T01 S1T02 S1T03` - Set 1, tracks 1-3
+- `D1T01 D1T02` - Alternative format (D for disc)
+- `1 2 3` - Simple track numbers (assumes set 1)
+- Case-insensitive
+
+**Requirements:**
+- At least 2 tracks must be specified
+- All tracks must be from the same set
+- Tracks must be sequential (consecutive numbers)
+
+### Multiple Merges
+
+Specify `--merge` multiple times to merge multiple groups:
+
+```bash
+pnpm cli \
+  --merge "S1T01 S1T02" \
+  --merge "S2T10 S2T11 S2T12" \
+  phish-show.zip
+```
+
+### How It Works
+
+1. If processing a directory (not an archive) and merging is needed, files are first copied to a temporary directory
+2. **Before** splits and analysis, merges are applied to file paths based on file position
+3. Files are concatenated using `ffmpeg -c copy` (fast, no re-encoding)
+4. The file list is updated with the merged file
+5. All files are analyzed and matched to the setlist
+6. Files are tagged and copied to the library
+
+**Important:**
+- Track numbers refer to **file position** in the sorted file list, not metadata tags
+- Tracks must be sequential (e.g., 1, 2, 3) - non-sequential tracks will error
+- All tracks in a merge must be from the same set
+- Your original files are never modified - merges are always performed in a temporary directory
+- If using both `--merge` and `--split`, merges are applied first, then splits
+
+**Example:**
+```bash
+# Input files (sorted)
+1. track_01.flac  ← "Tweezer Part 1" (10:00)
+2. track_02.flac  ← "Tweezer Part 2" (5:00)
+3. track_03.flac  ← "Fluffhead"
+
+# After --merge "1 2"
+1. track_01_merged.flac  ← Combined "Tweezer" (15:00)
+2. track_03.flac         ← Original track 3 (now at position 2)
+
+# Matched to setlist
+track_01_merged.flac → "Tweezer"
+track_03.flac        → "Fluffhead"
 ```
 
 ## Pipeline
@@ -490,15 +593,15 @@ pnpm test:watch
 
 ## TODO
 
-- if a file is not FLAC, it must be converted, even if no audio samling conversion is needed
-- Splitting tracks cannot be done in the source folder. If we have to split tracks, they must be first copied to tmp
-- We need to sort numbers correctly when they are part of the original track - if it starts with a #, then parse it after
-- similar to our "--split" option, let's add "--merge" to merge tracks like '--merge "D1T01 D1T02 ...". This should error if merging non-sequential tracks
-- Phish imports don't handle country correctly, missing from api?
-- We should be able to handle incomplete shows (e.g. one set) - as long as there are fewer tracks and we match them all by name
-- When we enter a previously unknown band, add config for it
-- Preprocss an archive by extracting any text or markdown files and try to identify the artist with using regex pattern matching. If multiple matches occur, ask
-- Add a --debug options; emit curl statement for API calls
-- Allow downloading a show direct from a URL. Provide config for temporary location in case conversion fails.
-- Add code using our callbacl/plugin pattern to parse artist & date from filenames
-- Allow choosing an image; resize to 400x400 and save as "cover.jpg"
+[x] if a file is not FLAC, it must be converted, even if no audio sampling conversion is needed
+[x] Splitting tracks cannot be done in the source folder. If we have to split tracks, they must be first copied to tmp
+[x] We need to sort numbers correctly when they are part of the original track - if it starts with a #, then parse it after
+[x] similar to our "--split" option, let's add "--merge" to merge tracks like '--merge "D1T01 D1T02 ...". This should error if merging non-sequential tracks
+[x] Phish imports don't handle country correctly, missing from api?
+[ ] We should be able to handle incomplete shows (e.g. one set) - as long as there are fewer tracks and we match them all by name
+[ ] When we enter a previously unknown band, add config for it
+[ ] Preprocss an archive by extracting any text or markdown files and try to identify the artist with using regex pattern matching. If multiple matches occur, ask
+[ ] Add a --debug options; emit curl statement for API calls
+[ ] Allow downloading a show direct from a URL. Provide config for temporary location in case conversion fails.
+[ ] Add code using our callbacl/plugin pattern to parse artist & date from filenames
+[ ] Allow choosing an image; resize to 400x400 and save as "cover.jpg"
