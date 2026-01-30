@@ -19,6 +19,7 @@ import { parseZipFilename } from "./matching/parse-filename.js";
 import { extractArchive, listAudioFiles, listNonAudioFiles, cleanupTempDir, isArchive } from "./utils/extract.js";
 import { verifyRequiredTools } from "./utils/startup.js";
 import { analyzeAllAudio, convertAllIfNeeded } from "./audio/audio.js";
+import { applySplitsToFiles, parseSplitSpec } from "./audio/split.js";
 import { fetchSetlist } from "./setlist/setlist.js";
 import { matchTracks } from "./matching/match.js";
 import { tagAllTracks, buildTemplateVars } from "./output/tagger.js";
@@ -210,55 +211,97 @@ async function processSingleArchive(
     }
   }
 
-  onProgress(`Show: ${showInfo.artist}`);
-  onProgress(`Date: ${showInfo.date}`);
-  onProgress(`Venue: ${showInfo.venue}, ${showInfo.city}, ${showInfo.state}`);
-
   // Step 2: Resolve band config
   const bandConfig = resolveBandConfig(config, showInfo.artist);
 
   // Use the band's display name if specified in config
   if (bandConfig.name) {
     showInfo.artist = bandConfig.name;
-    onProgress(`Using band name from config: ${bandConfig.name}`);
   }
 
-  // Step 3: Prepare working directory (extract archive or use directory)
+  // Step 3: Determine show date early (before processing files)
+  // We need date + artist to fetch setlist
+  if (showInfo.date === "Unknown" || showInfo.date === "") {
+    onProgress("\nShow date not determined from filename/path");
+
+    if (!flags.batch && !flags["dry-run"]) {
+      // Interactive mode - prompt user
+      showInfo.date = await promptForDate();
+      onProgress(`Using date: ${showInfo.date}`);
+    } else {
+      throw new Error(
+        "Show date could not be determined. Please specify with --date flag or include date in filename."
+      );
+    }
+  }
+
+  // Step 4: Fetch setlist early (now that we have artist + date)
+  // This gives us complete venue info to show the user
+  onProgress("\nFetching setlist...");
+  const setlist = await fetchSetlist(showInfo, bandConfig, config);
+
+  // Update showInfo with venue details from API (more accurate than filename parsing)
+  // CLI flags still take precedence
+  if (!flags.venue && setlist.venue) {
+    showInfo.venue = setlist.venue;
+  }
+  if (!flags.city && setlist.city) {
+    showInfo.city = setlist.city;
+  }
+  if (!flags.state && setlist.state) {
+    showInfo.state = setlist.state;
+  }
+  if (setlist.country) {
+    showInfo.country = setlist.country;
+  }
+
+  // Show complete venue information
+  const locationDisplay = showInfo.country && !(/^[A-Z]{2}$/i.test(showInfo.state))
+    ? `${showInfo.city}, ${showInfo.country}`
+    : `${showInfo.city}, ${showInfo.state}`;
+
+  onProgress(`\nShow: ${showInfo.artist}`);
+  onProgress(`Date: ${showInfo.date}`);
+  onProgress(`Venue: ${showInfo.venue}, ${locationDisplay}`);
+  onProgress(`Setlist: ${setlist.songs.length} song(s) across ${new Set(setlist.songs.map((s) => s.set)).size} set(s)`);
+  if (setlist.url) {
+    onProgress(`Setlist URL: ${setlist.url}`);
+  }
+
+  // Step 5: Prepare working directory (extract archive or use directory)
   onProgress("\nPreparing working directory...");
   const workingDir = await extractArchive(zipPath, onProgress);
 
   try {
-    // Step 4: List and analyze audio files
-    const audioFiles = await listAudioFiles(workingDir.path, bandConfig.excludePatterns ?? []);
+    // Step 4: List audio files
+    let audioFiles = await listAudioFiles(workingDir.path, bandConfig.excludePatterns ?? []);
     if (audioFiles.length === 0) {
       throw new Error("No audio files found in archive");
     }
     onProgress(`\nFound ${audioFiles.length} audio file(s)`);
 
-    onProgress("\nAnalyzing audio...");
-    let audioInfos = await analyzeAllAudio(audioFiles, onProgress);
-
-    // Step 5: Determine show date if not already known
-    if (showInfo.date === "Unknown" || showInfo.date === "") {
-      onProgress("\nShow date not determined from filename/path");
-
-      // Try to extract from audio metadata
-      const metadataDate = extractDateFromMetadata(audioInfos);
-      if (metadataDate) {
-        showInfo.date = metadataDate;
-        onProgress(`Found date in audio metadata: ${showInfo.date}`);
-      } else if (!flags.batch && !flags["dry-run"]) {
-        // Interactive mode - prompt user
-        showInfo.date = await promptForDate();
-        onProgress(`Using date: ${showInfo.date}`);
-      } else {
+    // Step 5: Apply track splits if specified (BEFORE analyzing)
+    if (flags.split && flags.split.length > 0) {
+      try {
+        const splits = flags.split.map(parseSplitSpec);
+        audioFiles = await applySplitsToFiles(
+          audioFiles,
+          splits,
+          onProgress
+        );
+        onProgress(`After splits: ${audioFiles.length} audio file(s)`);
+      } catch (error) {
         throw new Error(
-          "Show date could not be determined. Please specify with --date flag or include date in filename."
+          `Failed to apply track splits: ${error instanceof Error ? error.message : String(error)}`
         );
       }
     }
 
-    // Step 6: Convert if needed (creates temp dir if needed)
+    // Step 6: Analyze audio files (including any split parts)
+    onProgress("\nAnalyzing audio...");
+    let audioInfos = await analyzeAllAudio(audioFiles, onProgress);
+
+    // Step 7: Convert if needed (creates temp dir if needed)
     onProgress("\nChecking conversion requirements...");
     const conversionResult = await convertAllIfNeeded(
       audioInfos,
@@ -271,29 +314,6 @@ async function processSingleArchive(
     // Update working directory if conversion created a temp dir
     Object.assign(workingDir, conversionResult.workingDir);
 
-    // Step 7: Fetch setlist
-    onProgress("\nFetching setlist...");
-    const setlist = await fetchSetlist(showInfo, bandConfig, config);
-    onProgress(
-      `Found setlist: ${setlist.songs.length} song(s) across ${new Set(setlist.songs.map((s) => s.set)).size} set(s)`
-    );
-    if (setlist.url) {
-      onProgress(`Setlist URL: ${setlist.url}`);
-    }
-
-    // Update showInfo with venue details from API (more accurate than filename parsing)
-    // CLI flags still take precedence
-    if (!flags.venue && setlist.venue) {
-      showInfo.venue = setlist.venue;
-    }
-    if (!flags.city && setlist.city) {
-      showInfo.city = setlist.city;
-    }
-    if (!flags.state && setlist.state) {
-      showInfo.state = setlist.state;
-    }
-    onProgress(`Venue: ${showInfo.venue}, ${showInfo.city}, ${showInfo.state}`);
-
     // Step 8: Match tracks to setlist
     onProgress("\nMatching tracks to setlist...");
     const matched = matchTracks(
@@ -303,27 +323,23 @@ async function processSingleArchive(
     );
     printMatchPreview(matched, onProgress);
 
-    // Step 9: Interactive confirmation
-    if (!flags["dry-run"] && !flags.batch) {
-      const confirmed = await confirmContinue();
-      if (!confirmed) {
-        onProgress("Aborted by user.");
-        return {
-          zipPath,
-          showInfo,
-          tracksProcessed: 0,
-          libraryPath: "",
-          dryRun: false,
-        };
-      }
-    }
-
     // Compute library path (sanitize values to avoid path issues - slashes → dashes)
     const sanitizedCity = sanitizeFilename(showInfo.city);
     const sanitizedState = sanitizeFilename(showInfo.state);
-    const location = (!sanitizedState || !/^[A-Z]{2}$/i.test(showInfo.state.trim()))
-      ? sanitizedCity
-      : `${sanitizedCity}, ${sanitizedState}`;
+    const sanitizedCountry = showInfo.country ? sanitizeFilename(showInfo.country) : undefined;
+
+    // Build location: "City, ST" for US, "City, Country" for international, or just "City"
+    let location: string;
+    if (sanitizedState && /^[A-Z]{2}$/i.test(showInfo.state.trim())) {
+      // US show - include state
+      location = `${sanitizedCity}, ${sanitizedState}`;
+    } else if (sanitizedCountry) {
+      // International show with country - include country
+      location = `${sanitizedCity}, ${sanitizedCountry}`;
+    } else {
+      // Fallback - just city
+      location = sanitizedCity;
+    }
 
     const targetDir = path.join(
       config.libraryBasePath,
@@ -337,12 +353,27 @@ async function processSingleArchive(
       })
     );
 
-    // Check for existing shows
+    // Check for existing shows BEFORE confirmation
     const existingShows = await findExistingShows(targetDir, showInfo.date, onProgress);
     if (existingShows.length > 0) {
       onProgress("\n⚠️  WARNING: Potentially duplicate show(s) found:");
       for (const show of existingShows) {
         onProgress(`  - ${show}`);
+      }
+    }
+
+    // Step 9: Interactive confirmation
+    if (!flags["dry-run"] && !flags.batch) {
+      const confirmed = await confirmContinue();
+      if (!confirmed) {
+        onProgress("Aborted by user.");
+        return {
+          zipPath,
+          showInfo,
+          tracksProcessed: 0,
+          libraryPath: "",
+          dryRun: false,
+        };
       }
     }
 

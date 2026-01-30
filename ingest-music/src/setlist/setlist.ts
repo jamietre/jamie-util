@@ -192,6 +192,7 @@ interface KGLWSong {
   venuename?: string;
   city?: string;
   state?: string;
+  country?: string;
   permalink?: string;
 }
 
@@ -216,6 +217,7 @@ export function parseKGLWResponse(
     venue: data.data[0]?.venuename ?? showInfo.venue,
     city: data.data[0]?.city ?? showInfo.city,
     state: data.data[0]?.state ?? showInfo.state,
+    country: data.data[0]?.country,
     songs,
     source: "kglw.net",
     url: setlistUrl,
@@ -239,7 +241,14 @@ interface SetlistFmSetlist {
   id: string;
   url: string;
   artist: { name: string };
-  venue: { name: string; city: { name: string; stateCode: string } };
+  venue: {
+    name: string;
+    city: {
+      name: string;
+      stateCode: string;
+      country?: { name: string };
+    }
+  };
   eventDate: string;
   sets: {
     set: SetlistFmSet[];
@@ -283,6 +292,7 @@ export function parseSetlistFmResponse(
     venue: data.venue?.name ?? showInfo.venue,
     city: data.venue?.city?.name ?? showInfo.city,
     state: data.venue?.city?.stateCode ?? showInfo.state,
+    country: data.venue?.city?.country?.name,
     songs,
     source: "setlist.fm",
     url: setlistUrl,

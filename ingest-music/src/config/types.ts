@@ -5,6 +5,7 @@ export interface ShowInfo {
   venue: string;
   city: string;
   state: string;
+  country?: string; // Country name for international shows
 }
 
 /** Configuration for a single setlist source (API endpoint) */
@@ -37,6 +38,8 @@ export interface BandConfig {
   conversion?: ConversionConfig;
   /** Regex patterns for files to exclude (e.g., macOS resource forks, system files) */
   excludePatterns?: string[];
+  /** Tag names to preserve from original files (e.g., ["COMMENT", "ENCODER", "REPLAYGAIN_*"]) */
+  keepTags?: string[];
 }
 
 /** Top-level config file schema */
@@ -72,6 +75,7 @@ export interface Setlist {
   venue: string;
   city: string;
   state: string;
+  country?: string; // Country name for international shows
   songs: SetlistSong[];
   /** Which API source provided this setlist */
   source: string;
@@ -101,6 +105,14 @@ export interface CliFlags {
   batch: boolean;
   "dry-run": boolean;
   "skip-conversion": boolean;
+  split?: string[]; // Track split specifications (e.g., "S2T17 12:22:00")
+}
+
+/** Parsed track split specification */
+export interface TrackSplit {
+  set: number;
+  track: number;
+  timestamp: number; // Time in seconds where to split
 }
 
 /** Result of processing a single zip */

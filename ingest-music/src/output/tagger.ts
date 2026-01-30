@@ -8,8 +8,50 @@ import { renderTemplate, zeroPad, sanitize, sanitizeFilename } from "./template.
 const execFileAsync = promisify(execFile);
 
 /**
- * Tag a FLAC file with metadata using ffmpeg.
- * Uses -c copy to avoid re-encoding.
+ * Read existing tags from a FLAC file and filter based on keepTags patterns.
+ * Returns an array of "TAG=value" strings for tags that should be preserved.
+ */
+async function readAndFilterTags(
+  filePath: string,
+  keepTags: string[]
+): Promise<string[]> {
+  if (!keepTags || keepTags.length === 0) {
+    return [];
+  }
+
+  try {
+    // Export all tags to stdout
+    const { stdout } = await execFileAsync("metaflac", [
+      "--export-tags-to=-",
+      filePath,
+    ]);
+
+    // Parse tags (format: "TAG=value")
+    const allTags = stdout
+      .trim()
+      .split("\n")
+      .filter((line) => line.includes("="));
+
+    // Filter tags based on keepTags patterns (with wildcard support)
+    const tagsToKeep = allTags.filter((tagLine) => {
+      const tagName = tagLine.split("=")[0];
+      return keepTags.some((pattern) => {
+        // Convert pattern to regex (support wildcards like "REPLAYGAIN_.*")
+        const regex = new RegExp(`^${pattern.replace(/\*/g, ".*")}$`, "i");
+        return regex.test(tagName);
+      });
+    });
+
+    return tagsToKeep;
+  } catch (error) {
+    // If reading tags fails, just continue without preserving tags
+    return [];
+  }
+}
+
+/**
+ * Tag a FLAC file with metadata using metaflac.
+ * Uses metaflac for proper Vorbis comment support (compatible with all FLAC players).
  */
 export async function tagFlac(
   track: MatchedTrack,
@@ -26,45 +68,46 @@ export async function tagFlac(
   const year = showInfo.date.split("-")[0]; // Extract YYYY from YYYY-MM-DD
 
   const inputPath = track.audioFile.filePath;
-  const dir = path.dirname(inputPath);
-  const outPath = path.join(dir, `tagged_${path.basename(inputPath)}`);
 
   onProgress?.(`  Tagging: ${track.song.title}`);
 
-  // Clear each tag we're about to write (setting to empty string), then write new value
-  // This ensures we replace existing tags rather than creating duplicates
+  // Use metaflac for proper FLAC Vorbis comment tagging
+  // metaflac modifies files in-place
   try {
-    const { stdout, stderr } = await execFileAsync("ffmpeg", [
-      "-i",
+    // Step 1: Read existing tags that should be preserved (based on keepTags patterns)
+    const keepTagsPatterns = bandConfig.keepTags ?? [];
+    const tagsToKeep = await readAndFilterTags(inputPath, keepTagsPatterns);
+
+    // Step 2: Remove all tags
+    await execFileAsync("metaflac", [
+      "--remove-all-tags",
+      "--preserve-modtime",
       inputPath,
-      "-c",
-      "copy",
-      // Clear existing tags
-      "-metadata", "ARTIST=",
-      "-metadata", "ALBUM=",
-      "-metadata", "ALBUMARTIST=",
-      "-metadata", "TITLE=",
-      "-metadata", "TRACKNUMBER=",
-      "-metadata", "DISCNUMBER=",
-      "-metadata", "GENRE=",
-      "-metadata", "DATE=",
-      "-metadata", "YEAR=", // Also clear YEAR in case it exists
-      // Write new tags
-      "-metadata", `ARTIST=${artist}`,
-      "-metadata", `ALBUM=${album}`,
-      "-metadata", `ALBUMARTIST=${albumArtist}`,
-      "-metadata", `TITLE=${title}`,
-      "-metadata", `TRACKNUMBER=${zeroPad(track.trackInSet)}`,
-      "-metadata", `DISCNUMBER=${track.effectiveSet}`,
-      "-metadata", `GENRE=${genre}`,
-      "-metadata", `DATE=${year}`,
-      "-y",
-      outPath,
     ]);
 
-    // Replace original with tagged version
-    await fs.unlink(inputPath);
-    await fs.rename(outPath, inputPath);
+    // Step 3: Add our managed tags
+    await execFileAsync("metaflac", [
+      `--set-tag=ARTIST=${artist}`,
+      `--set-tag=ALBUM=${album}`,
+      `--set-tag=ALBUMARTIST=${albumArtist}`,
+      `--set-tag=TITLE=${title}`,
+      `--set-tag=TRACKNUMBER=${zeroPad(track.trackInSet)}`,
+      `--set-tag=DISCNUMBER=${track.effectiveSet}`,
+      `--set-tag=GENRE=${genre}`,
+      `--set-tag=DATE=${year}`,
+      "--preserve-modtime",
+      inputPath,
+    ]);
+
+    // Step 4: Re-add preserved tags (if any)
+    if (tagsToKeep.length > 0) {
+      const setTagArgs = tagsToKeep.map((tag) => `--set-tag=${tag}`);
+      await execFileAsync("metaflac", [
+        ...setTagArgs,
+        "--preserve-modtime",
+        inputPath,
+      ]);
+    }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to tag ${path.basename(inputPath)}: ${msg}`);
@@ -94,21 +137,28 @@ function isUsState(state: string): boolean {
 }
 
 /**
- * Build a location string from city and state.
+ * Build a location string from city, state, and country.
  * For US shows (2-letter state codes), returns "City, ST".
- * For international shows, returns just "City".
+ * For international shows with country, returns "City, Country".
+ * Otherwise, returns just "City".
  */
-function buildLocation(city: string, state: string): string {
+function buildLocation(city: string, state: string, country?: string): string {
   const sanitizedCity = sanitizeFilename(city);
   const sanitizedState = sanitizeFilename(state);
-
-  // If state is empty or doesn't look like a US state, just use city
-  if (!sanitizedState || !isUsState(state)) {
-    return sanitizedCity;
-  }
+  const sanitizedCountry = country ? sanitizeFilename(country) : undefined;
 
   // US show - include state
-  return `${sanitizedCity}, ${sanitizedState}`;
+  if (sanitizedState && isUsState(state)) {
+    return `${sanitizedCity}, ${sanitizedState}`;
+  }
+
+  // International show with country - include country
+  if (sanitizedCountry) {
+    return `${sanitizedCity}, ${sanitizedCountry}`;
+  }
+
+  // Fallback - just city
+  return sanitizedCity;
 }
 
 /**
@@ -125,7 +175,7 @@ export function buildTemplateVars(
     venue: sanitizeFilename(showInfo.venue),
     city: sanitizeFilename(showInfo.city),
     state: sanitizeFilename(showInfo.state),
-    location: buildLocation(showInfo.city, showInfo.state),
+    location: buildLocation(showInfo.city, showInfo.state, showInfo.country),
     title: sanitizeFilename(track.song.title),
     track: zeroPad(track.trackInSet),
     set: track.effectiveSet,

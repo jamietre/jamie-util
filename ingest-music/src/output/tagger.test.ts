@@ -104,6 +104,34 @@ describe("buildTemplateVars", () => {
       const vars = buildTemplateVars(baseTrack, showInfo);
       expect(vars.location).toBe("City");
     });
+
+    it("includes country for international shows", () => {
+      const showInfo: ShowInfo = {
+        artist: "King Gizzard",
+        date: "2025-11-10",
+        venue: "Columbiahalle",
+        city: "Berlin",
+        state: "16", // Not a US state
+        country: "Germany",
+      };
+
+      const vars = buildTemplateVars(baseTrack, showInfo);
+      expect(vars.location).toBe("Berlin, Germany");
+    });
+
+    it("prefers state over country for US shows", () => {
+      const showInfo: ShowInfo = {
+        artist: "Phish",
+        date: "2024-08-16",
+        venue: "Venue",
+        city: "New York",
+        state: "NY",
+        country: "United States",
+      };
+
+      const vars = buildTemplateVars(baseTrack, showInfo);
+      expect(vars.location).toBe("New York, NY");
+    });
   });
 
   describe("all template variables", () => {

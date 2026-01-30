@@ -176,7 +176,13 @@ export async function convertAudioToTarget(
   const rule = findMatchingRule(info);
   const filePath = info.filePath;
   const base = path.basename(filePath, path.extname(filePath));
-  const outPath = path.join(targetDir, `${base}.flac`);
+
+  // If converting in the same directory, use a temp filename to avoid in-place conversion
+  const inputDir = path.dirname(filePath);
+  const useTempName = path.resolve(inputDir) === path.resolve(targetDir);
+  const tempOutPath = path.join(targetDir, `${base}_converting.flac`);
+  const finalOutPath = path.join(targetDir, `${base}.flac`);
+  const outPath = useTempName ? tempOutPath : finalOutPath;
 
   // Build conversion description
   const targetDesc: string[] = [];
@@ -189,7 +195,13 @@ export async function convertAudioToTarget(
   const args = buildConversionArgs(rule, bandConfig, filePath, outPath);
   await execFileAsync("ffmpeg", args);
 
-  return outPath;
+  // If we used a temp name, replace the original
+  if (useTempName) {
+    await fs.unlink(filePath);
+    await fs.rename(tempOutPath, finalOutPath);
+  }
+
+  return finalOutPath;
 }
 
 /**

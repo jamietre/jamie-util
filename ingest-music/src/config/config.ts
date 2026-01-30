@@ -26,6 +26,13 @@ const DEFAULT_CONFIG: Config = {
       "^Thumbs\\.db$", // Windows thumbnails
       "^\\.", // Other hidden files
     ],
+    keepTags: [
+      "COMMENT",
+      "DESCRIPTION",
+      "ENCODER",
+      "REPLAYGAIN_.*", // ReplayGain tags (with wildcard support)
+      "R128_.*", // EBU R128 loudness tags
+    ],
   },
   bands: {},
 };

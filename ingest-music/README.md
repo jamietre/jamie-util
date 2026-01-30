@@ -42,6 +42,9 @@ pnpm cli --batch ~/downloads/shows/
 # Override parsed show info
 pnpm cli --artist "Phish" --date 2024-08-16 --venue "Dick's" ~/downloads/show.zip
 
+# Split tracks to match official setlist
+pnpm cli --split "S2T16 12:22" ~/downloads/phish-1999-12-02.zip
+
 # Use a specific config file
 pnpm cli --config ~/my-config.json ~/downloads/show.zip
 ```
@@ -65,6 +68,8 @@ FLAGS
      --batch             Process all archives in directory
      --dry-run           Preview without writing
      --skip-conversion   Skip audio format conversion
+     --split             Split track at timestamp (e.g., S2T17 12:22 or 2-17 12:22:00)
+                         Can be specified multiple times for multiple splits
   -h --help              Print help information and exit
   -v --version           Print version information and exit
 
@@ -123,7 +128,8 @@ Then edit with your API keys and library path.
     "genre": "Live",
     "targetPathTemplate": "{artist}/{date} - {venue}, {city}, {state}",
     "fileNameTemplate": "{date} S{set} T{track} - {title}.flac",
-    "encoreInSet2": true
+    "encoreInSet2": true,
+    "keepTags": ["COMMENT", "DESCRIPTION", "ENCODER", "REPLAYGAIN_.*", "R128_.*"]
   },
   "bands": {
     "phish": {
@@ -183,6 +189,7 @@ These fields can appear in `defaults` or in any `bands` entry (band values overr
 | `targetPathTemplate` | `{artist}/{date} - {venue}, {city}, {state}` | Directory structure under `libraryBasePath` |
 | `fileNameTemplate` | `{date} S{set} T{track} - {title}.flac` | Output filename for each track |
 | `encoreInSet2` | `true` | Merge encore songs into set 2 numbering |
+| `keepTags` | `["COMMENT", "ENCODER", "REPLAYGAIN_.*", ...]` | Tag patterns to preserve from original files (supports wildcards) |
 
 #### Artist matching with patterns
 
@@ -226,6 +233,46 @@ Each band config uses the `patterns` array for **regex-based, case-insensitive**
 - First match wins, so order bands strategically if patterns might overlap
 - Invalid regex patterns fall back to exact string matching
 
+#### Tag preservation with keepTags
+
+The `keepTags` option controls which tags from original files are preserved during tagging. By default, common metadata tags are preserved:
+
+```json
+"keepTags": [
+  "COMMENT",
+  "DESCRIPTION",
+  "ENCODER",
+  "REPLAYGAIN_.*",
+  "R128_.*"
+]
+```
+
+**How it works:**
+1. Before tagging, existing tags are read from the FLAC file
+2. Tags matching any pattern in `keepTags` are saved
+3. All tags are removed
+4. New tags (ARTIST, ALBUM, TITLE, etc.) are written
+5. Preserved tags are restored
+
+**Pattern matching:**
+- Exact match: `"COMMENT"` preserves only the COMMENT tag
+- Wildcard: `"REPLAYGAIN_.*"` preserves REPLAYGAIN_TRACK_GAIN, REPLAYGAIN_ALBUM_GAIN, etc.
+- Case-insensitive: `"encoder"` matches "ENCODER", "Encoder", "encoder"
+
+**Example custom configuration:**
+```json
+"bands": {
+  "phish": {
+    "keepTags": ["COMMENT", "ENCODER", "REPLAYGAIN_.*", "MY_CUSTOM_TAG"]
+  }
+}
+```
+
+**To remove all original tags** (fresh start):
+```json
+"keepTags": []
+```
+
 ### Template variables
 
 Templates use `{variable}` substitution. Available variables:
@@ -267,20 +314,100 @@ The `{location}` variable intelligently formats the location based on whether it
 - Input: `city="Commerce City"`, `state="CO"`
 - Output: `"Commerce City, CO"`
 
-**International shows** (non-US state code or empty):
-- Input: `city="Berlin"`, `state="16"` (region code)
+**International shows with country** (from setlist API):
+- Input: `city="Berlin"`, `state="16"`, `country="Germany"`
+- Output: `"Berlin, Germany"`
+- Input: `city="London"`, `state=""`, `country="United Kingdom"`
+- Output: `"London, United Kingdom"`
+
+**International shows without country**:
+- Input: `city="Berlin"`, `state="16"` (no country data)
 - Output: `"Berlin"`
-- Input: `city="London"`, `state=""`
-- Output: `"London"`
+
+**Priority:** US state (2 letters) > Country > City only
 
 **Why use `{location}` instead of `{city}, {state}`:**
 - Avoids awkward trailing commas for international shows
 - Automatically detects US state codes (2 uppercase letters)
+- Includes country names for international shows (from setlist API)
 - Cleaner output for mixed US/international show libraries
 
 **Example templates:**
 - `{date} {venue}, {location}` → `"2024-08-16 Dick's, Commerce City, CO"` (US)
-- `{date} {venue}, {location}` → `"2025-11-10 Columbiahalle, Berlin"` (International)
+- `{date} {venue}, {location}` → `"2025-11-10 Columbiahalle, Berlin, Germany"` (International with country)
+- `{date} {venue}, {location}` → `"2025-11-10 Venue, Tokyo"` (International, no country data)
+
+## Track Splitting
+
+Sometimes tapers split tracks differently than the official setlist. For example:
+- **Taper's split**: Track 16: "You Enjoy Myself" (15:00)
+- **Official setlist**: Track 16: "You Enjoy Myself" (12:22), Track 17: "The Little Drummer Boy" (2:38)
+
+Use `--split` to split a single audio file into multiple tracks to match the official setlist:
+
+```bash
+pnpm cli --split "S2T17 12:22" phish-1999-12-02.zip
+```
+
+### Split Format
+
+```
+--split <track-id> <timestamp>
+```
+
+**Track ID formats:**
+- `S2T17` - Set 2, Track 17
+- `2-17` - Alternative format (set 2, track 17)
+- Case-insensitive
+
+**Timestamp formats:**
+- `HH:MM:SS` - Hours:Minutes:Seconds (e.g., `1:23:45`)
+- `MM:SS` - Minutes:Seconds (e.g., `12:22`)
+- `742` - Raw seconds
+- Fractional seconds supported (e.g., `742.5`)
+
+### Multiple Splits
+
+Specify `--split` multiple times to split multiple tracks:
+
+```bash
+pnpm cli \
+  --split "S1T5 5:30" \
+  --split "S2T17 12:22" \
+  phish-1999-12-02.zip
+```
+
+### How It Works
+
+1. **Before** audio analysis, splits are applied to file paths based on file position
+2. The Nth file in the sorted list is split into two files using `ffmpeg -c copy` (fast, no re-encoding)
+3. The file list is updated with both split parts
+4. All files (including split parts) are analyzed and matched to the setlist
+5. Files are tagged and copied to the library
+
+**Important:** Track numbers refer to **file position** in the sorted file list, not metadata tags. `S2T16` means "split the 16th file", regardless of what TRACKNUMBER tag it has.
+
+**Example:**
+```bash
+# Input files (sorted)
+1. track_01.flac
+2. track_02.flac
+...
+16. track_16.flac  ← "You Enjoy Myself" (15:00 total)
+17. track_17.flac  ← "Contact"
+
+# After --split "16 12:22"  (or "S1T16 12:22" if specifying set)
+1. track_01.flac
+...
+16. track_16_part1.flac  ← First 12:22 of track 16
+17. track_16_part2.flac  ← Remaining 2:38 of track 16
+18. track_17.flac        ← Original track 17 (now at position 18)
+
+# Matched to setlist
+track_16_part1.flac → "You Enjoy Myself"
+track_16_part2.flac → "The Little Drummer Boy"
+track_17.flac       → "Contact"
+```
 
 ## Pipeline
 
