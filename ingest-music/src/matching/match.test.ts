@@ -13,6 +13,7 @@ function makeAudio(name: string, trackNumber?: number): AudioInfo {
     bitsPerSample: 16,
     sampleRate: 44100,
     trackNumber,
+    discNumber: undefined,
     title: undefined,
     duration: 300,
   };

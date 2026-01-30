@@ -22,6 +22,10 @@ export interface ConversionConfig {
 
 /** Per-band configuration, merged with defaults */
 export interface BandConfig {
+  /** Display name for the artist (if different from config key) */
+  name?: string;
+  /** Patterns for matching artist names (case-insensitive). Required for each band. */
+  patterns?: string[];
   setlistSources: string[]; // e.g. ["phish.net", "setlist.fm"] — tried in order
   albumTemplate: string;
   albumArtist: string;

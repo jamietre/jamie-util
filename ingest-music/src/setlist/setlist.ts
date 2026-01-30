@@ -28,6 +28,8 @@ export async function fetchSetlist(
     try {
       if (sourceName === "phish.net") {
         return await fetchPhishNet(showInfo, sourceConfig);
+      } else if (sourceName === "kglw.net") {
+        return await fetchKGLW(showInfo, sourceConfig);
       } else if (sourceName === "setlist.fm") {
         return await fetchSetlistFm(showInfo, sourceConfig);
       } else {
@@ -65,6 +67,29 @@ async function fetchPhishNet(
   }
 
   return parsePhishNetResponse(data, showInfo);
+}
+
+/**
+ * Fetch setlist from kglw.net API.
+ */
+async function fetchKGLW(
+  showInfo: ShowInfo,
+  sourceConfig: SetlistSourceConfig,
+): Promise<Setlist> {
+  const baseUrl = sourceConfig.url ?? "https://kglw.net/api/v2";
+  const url = `${baseUrl}/setlists/showdate/${showInfo.date}.json`;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = (await response.json()) as KGLWResponse;
+  if (!data.data || data.data.length === 0) {
+    throw new Error(`No setlist found for ${showInfo.date}`);
+  }
+
+  return parseKGLWResponse(data, showInfo);
 }
 
 /**
@@ -151,6 +176,56 @@ function parsePhishNetSet(set: string): number {
   const s = set.toUpperCase();
   if (s === "E" || s === "E2" || s === "3") return 3;
   const n = parseInt(set, 10);
+  return isNaN(n) ? 1 : n;
+}
+
+// --- kglw.net types and parsing ---
+
+interface KGLWResponse {
+  data: KGLWSong[];
+}
+
+interface KGLWSong {
+  songname: string;
+  setnumber: string; // "1", "2", "Encore", etc.
+  position: number;
+  venuename?: string;
+  city?: string;
+  state?: string;
+  permalink?: string;
+}
+
+export function parseKGLWResponse(
+  data: KGLWResponse,
+  showInfo: ShowInfo,
+): Setlist {
+  const songs: SetlistSong[] = data.data.map((item) => ({
+    title: item.songname,
+    set: parseKGLWSet(item.setnumber),
+    position: item.position,
+  }));
+
+  // Build kglw.net URL from permalink if available
+  const setlistUrl = data.data[0]?.permalink
+    ? `https://kglw.net${data.data[0].permalink}`
+    : `https://kglw.net/setlists/${showInfo.date}`;
+
+  return {
+    artist: showInfo.artist,
+    date: showInfo.date,
+    venue: data.data[0]?.venuename ?? showInfo.venue,
+    city: data.data[0]?.city ?? showInfo.city,
+    state: data.data[0]?.state ?? showInfo.state,
+    songs,
+    source: "kglw.net",
+    url: setlistUrl,
+  };
+}
+
+function parseKGLWSet(setNumber: string): number {
+  const s = setNumber.toLowerCase();
+  if (s === "encore" || s === "e" || s === "3") return 3;
+  const n = parseInt(setNumber, 10);
   return isNaN(n) ? 1 : n;
 }
 

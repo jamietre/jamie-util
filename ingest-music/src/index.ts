@@ -1,20 +1,34 @@
 #!/usr/bin/env node
 import { buildApplication, buildCommand, run } from "@stricli/core";
+import type { CommandContext } from "@stricli/core";
 import { ingestMusic } from "./ingest-music.js";
+
+interface IngestFlags {
+  config?: string;
+  artist?: string;
+  date?: string;
+  venue?: string;
+  city?: string;
+  state?: string;
+  library?: string;
+  batch: boolean;
+  "dry-run": boolean;
+  "skip-conversion": boolean;
+}
 
 const ingestCommand = buildCommand({
   docs: {
     brief:
-      "Process concert recording zip archives into an organized, tagged music library",
+      "Process concert recording archives or directories into an organized, tagged music library",
   },
   parameters: {
     positional: {
       kind: "tuple",
       parameters: [
         {
-          brief: "Path to zip file (or directory in batch mode)",
+          brief: "Path to archive or directory",
           parse: String,
-          placeholder: "zipPath",
+          placeholder: "path",
         },
       ],
     },
@@ -63,7 +77,7 @@ const ingestCommand = buildCommand({
       },
       batch: {
         kind: "boolean",
-        brief: "Process all zips in directory",
+        brief: "Process all archives in directory",
         default: false,
       },
       "dry-run": {
@@ -78,17 +92,21 @@ const ingestCommand = buildCommand({
       },
     },
   },
-  async func(flags, zipPath: string) {
+  async func(
+    this: CommandContext,
+    flags: IngestFlags,
+    inputPath: string
+  ): Promise<void> {
     console.log("Ingest Music");
     console.log("============");
-    console.log(`Input: ${zipPath}`);
+    console.log(`Input: ${inputPath}`);
     console.log(
       `Mode:  ${flags["dry-run"] ? "DRY RUN" : flags.batch ? "BATCH" : "SINGLE"}`
     );
     console.log();
 
     try {
-      const results = await ingestMusic(zipPath, flags);
+      const results = await ingestMusic(inputPath, flags);
 
       console.log();
       console.log("Results");

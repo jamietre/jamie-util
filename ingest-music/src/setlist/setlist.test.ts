@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   parsePhishNetResponse,
+  parseKGLWResponse,
   parseSetlistFmResponse,
 } from "./setlist.js";
 import type { ShowInfo } from "../config/types.js";
@@ -77,6 +78,82 @@ describe("parsePhishNetResponse", () => {
     const result = parsePhishNetResponse(data, showInfo);
     expect(result.source).toBe("phish.net");
     expect(result.url).toBe("https://phish.net/setlists/?d=2024-08-16");
+  });
+});
+
+describe("parseKGLWResponse", () => {
+  const kglwShowInfo: ShowInfo = {
+    artist: "King Gizzard & the Lizard Wizard",
+    date: "2024-08-16",
+    venue: "Forest Hills Stadium",
+    city: "Queens",
+    state: "NY",
+  };
+
+  it("parses songs with set and position", () => {
+    const data = {
+      data: [
+        { songname: "The Dripping Tap", setnumber: "1", position: 1, venuename: "Forest Hills Stadium", city: "Queens", state: "NY" },
+        { songname: "Magma", setnumber: "1", position: 2 },
+        { songname: "Gaia", setnumber: "2", position: 1 },
+        { songname: "The River", setnumber: "Encore", position: 1 },
+      ],
+    };
+    const result = parseKGLWResponse(data, kglwShowInfo);
+    expect(result.songs).toHaveLength(4);
+    expect(result.songs[0]).toEqual({
+      title: "The Dripping Tap",
+      set: 1,
+      position: 1,
+    });
+    expect(result.songs[2]).toEqual({
+      title: "Gaia",
+      set: 2,
+      position: 1,
+    });
+    expect(result.songs[3]).toEqual({
+      title: "The River",
+      set: 3,
+      position: 1,
+    });
+  });
+
+  it("uses venue info from API when available", () => {
+    const data = {
+      data: [
+        { songname: "Song", setnumber: "1", position: 1, venuename: "API Venue", city: "API City", state: "CA" },
+      ],
+    };
+    const result = parseKGLWResponse(data, kglwShowInfo);
+    expect(result.venue).toBe("API Venue");
+    expect(result.city).toBe("API City");
+    expect(result.state).toBe("CA");
+  });
+
+  it("falls back to showInfo for missing venue data", () => {
+    const data = {
+      data: [{ songname: "Song", setnumber: "1", position: 1 }],
+    };
+    const result = parseKGLWResponse(data, kglwShowInfo);
+    expect(result.venue).toBe("Forest Hills Stadium");
+  });
+
+  it("includes source and URL with permalink", () => {
+    const data = {
+      data: [{ songname: "Song", setnumber: "1", position: 1, permalink: "/setlists/2024-08-16-forest-hills" }],
+    };
+    const result = parseKGLWResponse(data, kglwShowInfo);
+    expect(result.source).toBe("kglw.net");
+    expect(result.url).toBe("https://kglw.net/setlists/2024-08-16-forest-hills");
+  });
+
+  it("includes source and URL without permalink", () => {
+    const data = {
+      data: [{ songname: "Song", setnumber: "1", position: 1 }],
+    };
+    const result = parseKGLWResponse(data, kglwShowInfo);
+    expect(result.source).toBe("kglw.net");
+    expect(result.url).toBe("https://kglw.net/setlists/2024-08-16");
   });
 });
 

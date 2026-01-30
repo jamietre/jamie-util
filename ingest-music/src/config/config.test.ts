@@ -66,6 +66,7 @@ describe("resolveBandConfig", () => {
     },
     bands: {
       phish: {
+        patterns: ["^phish$"],
         setlistSources: ["phish.net", "setlist.fm"],
         genre: "Jam",
       },

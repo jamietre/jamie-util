@@ -21,7 +21,13 @@
       "Bash(pnpm run build:*)",
       "Bash(pnpm run:*)",
       "Bash(tree:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(pnpm build:*)",
+      "Bash(pnpm typecheck:*)",
+      "Bash(git stash:*)",
+      "Bash(npx tsc:*)",
+      "Bash(metaflac:*)",
+      "Bash(ffprobe:*)"
     ]
   }
 }

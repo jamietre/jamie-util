@@ -21,6 +21,7 @@ describe("ingest-music pipeline helpers", () => {
       bitsPerSample: 16,
       sampleRate: 44100,
       trackNumber: 1,
+      discNumber: undefined,
       title: undefined,
       duration: 600,
     },

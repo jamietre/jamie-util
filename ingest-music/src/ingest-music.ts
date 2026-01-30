@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
@@ -11,6 +12,7 @@ import type {
   ProgressCallback,
   MatchedTrack,
   BandConfig,
+  AudioInfo,
 } from "./config/types.js";
 import { loadConfig, resolveBandConfig } from "./config/config.js";
 import { parseZipFilename } from "./matching/parse-filename.js";
@@ -171,8 +173,21 @@ async function processSingleArchive(
   config: Config,
   onProgress: ProgressCallback
 ): Promise<IngestResult> {
-  // Step 1: Parse show info from filename
-  const parsed = parseZipFilename(path.basename(zipPath));
+  // Step 1: Parse show info from filename/directory name
+  // For directories, parse the parent directory name (which usually has show info)
+  // For archives, parse the archive filename
+  let nameToParse;
+  const stats = await fs.stat(zipPath);
+  if (stats.isDirectory()) {
+    // Use parent directory name for parsing (e.g., "King Gizzard... - Live in Berlin '25")
+    // The subdirectory (e.g., "SOUNDBOARD MIX") usually doesn't have show info
+    const parent = path.dirname(zipPath);
+    nameToParse = path.basename(parent);
+  } else {
+    nameToParse = path.basename(zipPath);
+  }
+
+  const parsed = parseZipFilename(nameToParse);
   const showInfo: ShowInfo = {
     artist: flags.artist ?? parsed.artist ?? "Unknown Artist",
     date: flags.date ?? parsed.date ?? "Unknown",
@@ -181,6 +196,20 @@ async function processSingleArchive(
     state: flags.state ?? parsed.state ?? "",
   };
 
+  // Prompt for artist if unknown
+  if (showInfo.artist === "Unknown Artist") {
+    onProgress("Artist not determined from filename/path");
+
+    if (!flags.batch && !flags["dry-run"]) {
+      showInfo.artist = await promptForArtist(config);
+      onProgress(`Using artist: ${showInfo.artist}`);
+    } else {
+      throw new Error(
+        "Artist could not be determined. Please specify with --artist flag or include artist in filename."
+      );
+    }
+  }
+
   onProgress(`Show: ${showInfo.artist}`);
   onProgress(`Date: ${showInfo.date}`);
   onProgress(`Venue: ${showInfo.venue}, ${showInfo.city}, ${showInfo.state}`);
@@ -188,13 +217,19 @@ async function processSingleArchive(
   // Step 2: Resolve band config
   const bandConfig = resolveBandConfig(config, showInfo.artist);
 
-  // Step 3: Extract archive
-  onProgress("\nExtracting archive...");
-  const tmpDir = await extractArchive(zipPath, onProgress);
+  // Use the band's display name if specified in config
+  if (bandConfig.name) {
+    showInfo.artist = bandConfig.name;
+    onProgress(`Using band name from config: ${bandConfig.name}`);
+  }
+
+  // Step 3: Prepare working directory (extract archive or use directory)
+  onProgress("\nPreparing working directory...");
+  const workingDir = await extractArchive(zipPath, onProgress);
 
   try {
     // Step 4: List and analyze audio files
-    const audioFiles = await listAudioFiles(tmpDir, bandConfig.excludePatterns ?? []);
+    const audioFiles = await listAudioFiles(workingDir.path, bandConfig.excludePatterns ?? []);
     if (audioFiles.length === 0) {
       throw new Error("No audio files found in archive");
     }
@@ -203,16 +238,40 @@ async function processSingleArchive(
     onProgress("\nAnalyzing audio...");
     let audioInfos = await analyzeAllAudio(audioFiles, onProgress);
 
-    // Step 5: Convert if needed
+    // Step 5: Determine show date if not already known
+    if (showInfo.date === "Unknown" || showInfo.date === "") {
+      onProgress("\nShow date not determined from filename/path");
+
+      // Try to extract from audio metadata
+      const metadataDate = extractDateFromMetadata(audioInfos);
+      if (metadataDate) {
+        showInfo.date = metadataDate;
+        onProgress(`Found date in audio metadata: ${showInfo.date}`);
+      } else if (!flags.batch && !flags["dry-run"]) {
+        // Interactive mode - prompt user
+        showInfo.date = await promptForDate();
+        onProgress(`Using date: ${showInfo.date}`);
+      } else {
+        throw new Error(
+          "Show date could not be determined. Please specify with --date flag or include date in filename."
+        );
+      }
+    }
+
+    // Step 6: Convert if needed (creates temp dir if needed)
     onProgress("\nChecking conversion requirements...");
-    audioInfos = await convertAllIfNeeded(
+    const conversionResult = await convertAllIfNeeded(
       audioInfos,
+      workingDir,
       bandConfig,
       flags["skip-conversion"],
       onProgress
     );
+    audioInfos = conversionResult.audioInfos;
+    // Update working directory if conversion created a temp dir
+    Object.assign(workingDir, conversionResult.workingDir);
 
-    // Step 6: Fetch setlist
+    // Step 7: Fetch setlist
     onProgress("\nFetching setlist...");
     const setlist = await fetchSetlist(showInfo, bandConfig, config);
     onProgress(
@@ -235,7 +294,7 @@ async function processSingleArchive(
     }
     onProgress(`Venue: ${showInfo.venue}, ${showInfo.city}, ${showInfo.state}`);
 
-    // Step 7: Match tracks to setlist
+    // Step 8: Match tracks to setlist
     onProgress("\nMatching tracks to setlist...");
     const matched = matchTracks(
       audioInfos,
@@ -244,7 +303,7 @@ async function processSingleArchive(
     );
     printMatchPreview(matched, onProgress);
 
-    // Step 8: Interactive confirmation
+    // Step 9: Interactive confirmation
     if (!flags["dry-run"] && !flags.batch) {
       const confirmed = await confirmContinue();
       if (!confirmed) {
@@ -260,14 +319,21 @@ async function processSingleArchive(
     }
 
     // Compute library path (sanitize values to avoid path issues - slashes → dashes)
+    const sanitizedCity = sanitizeFilename(showInfo.city);
+    const sanitizedState = sanitizeFilename(showInfo.state);
+    const location = (!sanitizedState || !/^[A-Z]{2}$/i.test(showInfo.state.trim()))
+      ? sanitizedCity
+      : `${sanitizedCity}, ${sanitizedState}`;
+
     const targetDir = path.join(
       config.libraryBasePath,
       renderTemplate(bandConfig.targetPathTemplate, {
         artist: sanitizeFilename(showInfo.artist),
         date: showInfo.date,
         venue: sanitizeFilename(showInfo.venue),
-        city: sanitizeFilename(showInfo.city),
-        state: sanitizeFilename(showInfo.state),
+        city: sanitizedCity,
+        state: sanitizedState,
+        location: location,
       })
     );
 
@@ -282,7 +348,7 @@ async function processSingleArchive(
 
     if (flags["dry-run"]) {
       onProgress("\n--- DRY RUN ---");
-      const nonAudioFiles = await listNonAudioFiles(tmpDir, bandConfig.excludePatterns ?? []);
+      const nonAudioFiles = await listNonAudioFiles(workingDir.path, bandConfig.excludePatterns ?? []);
       printTagsSummary(matched, showInfo, bandConfig, onProgress);
       printDryRun(matched, showInfo, bandConfig, targetDir, nonAudioFiles, onProgress);
       return {
@@ -294,23 +360,51 @@ async function processSingleArchive(
       };
     }
 
-    // Step 9: Tag FLAC files
+    // Step 9b: Copy to temp if not already there (for tagging)
+    if (!workingDir.shouldCleanup) {
+      // Not in temp yet - need to copy files before tagging
+      onProgress("\nCopying files to temp directory for tagging...");
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ingest-music-"));
+
+      // Copy all audio files
+      for (const info of audioInfos) {
+        const destPath = path.join(tmpDir, path.basename(info.filePath));
+        await fs.copyFile(info.filePath, destPath);
+      }
+
+      // Update audio infos with new paths
+      audioInfos = audioInfos.map(info => ({
+        ...info,
+        filePath: path.join(tmpDir, path.basename(info.filePath))
+      }));
+
+      // Update working directory
+      workingDir.path = tmpDir;
+      workingDir.shouldCleanup = true;
+
+      // Update matched tracks with new paths
+      matched.forEach(m => {
+        m.audioFile.filePath = path.join(tmpDir, path.basename(m.audioFile.filePath));
+      });
+    }
+
+    // Step 10: Tag FLAC files
     onProgress("\nTagging files...");
     printTagsSummary(matched, showInfo, bandConfig, onProgress);
     await tagAllTracks(matched, showInfo, bandConfig, onProgress);
 
-    // Step 10: Copy to library
+    // Step 11: Copy to library
     onProgress(`\nCopying to library: ${targetDir}`);
     await copyToLibrary(matched, showInfo, bandConfig, targetDir, onProgress);
 
-    // Step 10b: Copy non-audio files (artwork, info.txt, etc.)
-    const nonAudioFiles = await listNonAudioFiles(tmpDir, bandConfig.excludePatterns ?? []);
+    // Step 11b: Copy non-audio files (artwork, info.txt, etc.)
+    const nonAudioFiles = await listNonAudioFiles(workingDir.path, bandConfig.excludePatterns ?? []);
     if (nonAudioFiles.length > 0) {
       onProgress(`\nCopying ${nonAudioFiles.length} supplementary file(s)...`);
       await copyNonAudioFiles(nonAudioFiles, targetDir, onProgress);
     }
 
-    // Step 10c: Generate and write log file
+    // Step 11c: Generate and write log file
     onProgress("\nGenerating ingest log...");
     const logContent = generateLogContent(
       showInfo,
@@ -332,9 +426,11 @@ async function processSingleArchive(
       dryRun: false,
     };
   } finally {
-    // Step 11: Clean up
-    onProgress("\nCleaning up temp directory...");
-    await cleanupTempDir(tmpDir);
+    // Step 12: Clean up temp directory (only if we created one)
+    if (workingDir.shouldCleanup) {
+      onProgress("\nCleaning up temp directory...");
+      await cleanupTempDir(workingDir.path);
+    }
   }
 }
 
@@ -464,6 +560,105 @@ async function confirmContinue(): Promise<boolean> {
       "\nProceed with tagging and copying? [y/N] "
     );
     return answer.trim().toLowerCase() === "y";
+  } finally {
+    rl.close();
+  }
+}
+
+/**
+ * Prompt the user for a show date.
+ * Validates the format is YYYY-MM-DD.
+ */
+async function promptForDate(): Promise<string> {
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+  try {
+    while (true) {
+      const answer = await rl.question(
+        "\nShow date could not be determined.\nPlease enter show date (YYYY-MM-DD): "
+      );
+      const trimmed = answer.trim();
+
+      // Validate format
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        // Basic validation - check if it's a reasonable date
+        const [year, month, day] = trimmed.split("-").map(Number);
+        if (year >= 1900 && year <= 2100 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+          return trimmed;
+        }
+      }
+
+      console.log("Invalid date format. Please use YYYY-MM-DD (e.g., 2024-08-16)");
+    }
+  } finally {
+    rl.close();
+  }
+}
+
+/**
+ * Try to extract a date from audio file metadata.
+ * Returns the first valid date found, or null if none.
+ */
+function extractDateFromMetadata(audioInfos: AudioInfo[]): string | null {
+  for (const audio of audioInfos) {
+    // Audio metadata might have a date field in the future
+    // For now, this is a placeholder for potential enhancement
+  }
+  return null;
+}
+
+/**
+ * Prompt the user to select an artist from configured bands.
+ * If bands are configured, shows a numbered list for selection.
+ * Otherwise, prompts for free text input.
+ */
+async function promptForArtist(config: Config): Promise<string> {
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+  try {
+    const bandNames = Object.keys(config.bands || {});
+
+    if (bandNames.length > 0) {
+      // Show numbered list of bands
+      console.log("\nSelect artist:");
+      bandNames.forEach((key, index) => {
+        // Use band's name field if specified, otherwise capitalize the key
+        const bandConfig = config.bands[key];
+        const displayName = bandConfig?.name ||
+          key.split(' ')
+            .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+            .join(' ');
+        console.log(`  ${index + 1}. ${displayName}`);
+      });
+      console.log(`  ${bandNames.length + 1}. Other (enter custom name)`);
+
+      while (true) {
+        const answer = await rl.question("\nEnter selection (1-" + (bandNames.length + 1) + "): ");
+        const selection = parseInt(answer.trim(), 10);
+
+        if (selection >= 1 && selection <= bandNames.length) {
+          return bandNames[selection - 1];
+        } else if (selection === bandNames.length + 1) {
+          // "Other" selected - prompt for custom name
+          const customName = await rl.question("Enter artist name: ");
+          const trimmed = customName.trim();
+          if (trimmed) {
+            return trimmed;
+          }
+          console.log("Artist name cannot be empty");
+        } else {
+          console.log(`Invalid selection. Please enter a number between 1 and ${bandNames.length + 1}`);
+        }
+      }
+    } else {
+      // No bands configured - just prompt for text
+      while (true) {
+        const answer = await rl.question("\nEnter artist name: ");
+        const trimmed = answer.trim();
+        if (trimmed) {
+          return trimmed;
+        }
+        console.log("Artist name cannot be empty");
+      }
+    }
   } finally {
     rl.close();
   }

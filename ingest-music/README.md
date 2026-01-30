@@ -1,6 +1,6 @@
 # ingest-music
 
-Process concert recording zip archives into an organized, tagged music library. Parses show info from filenames, fetches setlists from phish.net or setlist.fm, matches tracks to songs, tags FLAC files, and copies them into a structured library.
+Process concert recording archives or directories into an organized, tagged music library. Parses show info from filenames/directory names, fetches setlists from phish.net, kglw.net, or setlist.fm, matches tracks to songs, tags FLAC files, and copies them into a structured library.
 
 ## Prerequisites
 
@@ -24,13 +24,19 @@ pnpm install
 ## Usage
 
 ```bash
-# Preview what would happen (dry run)
+# Preview what would happen (dry run) - archive
 pnpm cli --dry-run ~/downloads/show.zip
+
+# Preview what would happen (dry run) - directory
+pnpm cli --dry-run ~/downloads/show-files/
 
 # Process a single archive
 pnpm cli ~/downloads/show.zip
 
-# Process all archives in a directory
+# Process a directory of audio files directly
+pnpm cli ~/downloads/show-files/
+
+# Process all archives in a directory (batch mode)
 pnpm cli --batch ~/downloads/shows/
 
 # Override parsed show info
@@ -44,7 +50,7 @@ pnpm cli --config ~/my-config.json ~/downloads/show.zip
 
 ```
 USAGE
-  ingest-music [flags] <zipPath>
+  ingest-music [flags] <path>
   ingest-music --help
   ingest-music --version
 
@@ -63,14 +69,19 @@ FLAGS
   -v --version           Print version information and exit
 
 ARGUMENTS
-  zipPath  Path to archive file (or directory in batch mode)
+  path  Path to archive file or directory of audio files
 ```
 
-### Supported archive formats
+### Supported input formats
 
-- `.zip`
-- `.tar.gz` / `.tgz`
-- `.gz`
+- **Archives**: `.zip`, `.tar.gz` / `.tgz`, `.gz` - extracted to temp directory
+- **Directories**: Pass a folder path directly - contents copied to temp directory for processing
+
+**Note:**
+- Archives are always extracted to a temporary directory
+- For directories: files are only copied to temp if needed (for conversion or tagging)
+- If conversion is needed, files are transcoded directly to temp (no unnecessary copying)
+- Your original files are never modified
 
 ## Configuration
 
@@ -100,6 +111,9 @@ Then edit with your API keys and library path.
     },
     "phish.net": {
       "apiKey": "your-phish-net-api-key"
+    },
+    "kglw.net": {
+      "apiKey": ""
     }
   },
   "defaults": {
@@ -113,8 +127,16 @@ Then edit with your API keys and library path.
   },
   "bands": {
     "phish": {
+      "name": "Phish",
+      "patterns": ["^phish$"],
       "setlistSources": ["phish.net", "setlist.fm"],
       "genre": "Jam"
+    },
+    "kglw": {
+      "name": "King Gizzard & The Lizard Wizard",
+      "patterns": ["^king gizzard (& |and )?(the )?lizard wizard$", "^kglw$"],
+      "setlistSources": ["kglw.net", "setlist.fm"],
+      "genre": "Psychedelic Rock"
     }
   }
 }
@@ -129,7 +151,9 @@ Then edit with your API keys and library path.
 | `libraryBasePath` | Root directory for the organized library output |
 | `setlistSources` | API credentials for each setlist provider |
 | `defaults` | Default settings applied to all bands |
-| `bands` | Per-band overrides, keyed by lowercase artist name |
+| `bands` | Per-band overrides, keyed by a unique identifier (not used for matching) |
+
+**Band keys**: The key (e.g., `"phish"`, `"kglw"`) is just a unique identifier for the band configuration. It is **not** used for matching artist names. Use the `patterns` array within each band config to specify which artist names should match this band. Use the `name` field to specify the display name.
 
 #### Setlist sources
 
@@ -137,10 +161,12 @@ Each entry under `setlistSources` has:
 
 | Field | Description |
 |---|---|
-| `apiKey` | API key for the service |
+| `apiKey` | API key for the service (empty string for kglw.net) |
 | `url` | (Optional) Override the API base URL |
 
-Supported sources: `setlist.fm`, `phish.net`.
+Supported sources: `phish.net`, `kglw.net`, `setlist.fm`.
+
+**Note:** kglw.net does not require an API key. Use an empty string for the `apiKey` field.
 
 #### Band/default settings
 
@@ -148,6 +174,8 @@ These fields can appear in `defaults` or in any `bands` entry (band values overr
 
 | Field | Default | Description |
 |---|---|---|
+| `name` | (none) | **Band-only**: Display name for the artist. If set, used as the artist name in all output. |
+| `patterns` | (none) | **Band-only, required**: Array of regex patterns (case-insensitive) for matching artist names. Use regex to match variations flexibly. |
 | `setlistSources` | `["setlist.fm"]` | Setlist APIs to try, in order. First success wins. |
 | `albumTemplate` | `{date} - {venue}, {city}, {state}` | ALBUM tag value |
 | `albumArtist` | `{artist}` | ALBUMARTIST tag value |
@@ -155,6 +183,48 @@ These fields can appear in `defaults` or in any `bands` entry (band values overr
 | `targetPathTemplate` | `{artist}/{date} - {venue}, {city}, {state}` | Directory structure under `libraryBasePath` |
 | `fileNameTemplate` | `{date} S{set} T{track} - {title}.flac` | Output filename for each track |
 | `encoreInSet2` | `true` | Merge encore songs into set 2 numbering |
+
+#### Artist matching with patterns
+
+Each band config uses the `patterns` array for **regex-based, case-insensitive** artist name matching:
+
+```json
+"kglw": {
+  "name": "King Gizzard & The Lizard Wizard",
+  "patterns": ["^king gizzard (& |and )?(the )?lizard wizard$", "^kglw$"],
+  ...
+}
+```
+
+**How it works:**
+1. Artist name is extracted from the zip filename or entered manually
+2. The name is matched against all `patterns` (as regexes, case-insensitive) in all band configs
+3. First matching band config is used
+4. If the band has a `name` field, it replaces the artist name in all output
+
+**Example:**
+- Input: `"King Gizzard & Lizard Wizard - 2024-08-16.zip"`
+- Matches pattern: `"^king gizzard (& |and )?(the )?lizard wizard$"` (case-insensitive regex)
+- Uses band config: `"kglw"`
+- Artist name becomes: `"King Gizzard & The Lizard Wizard"` (from `name` field)
+
+**Regex pattern examples:**
+- `"^phish$"` - Exact match for "phish" (case-insensitive)
+- `"^king gizzard (& |and )?(the )?lizard wizard$"` - Matches all these variations:
+  - "King Gizzard & The Lizard Wizard"
+  - "King Gizzard & Lizard Wizard"
+  - "King Gizzard and The Lizard Wizard"
+  - "King Gizzard and Lizard Wizard"
+- `"^(kglw|kgatlw)$"` - Matches "kglw" or "kgatlw"
+- `"goose"` - Matches any artist containing "goose"
+
+**Tips:**
+- Use `^` and `$` anchors for exact matches
+- Use `(option1|option2)` for alternatives
+- Use `?` for optional parts (e.g., `(the )?` matches "the " or nothing)
+- All matching is case-insensitive (uses `/pattern/i` flag)
+- First match wins, so order bands strategically if patterns might overlap
+- Invalid regex patterns fall back to exact string matching
 
 ### Template variables
 
@@ -168,6 +238,7 @@ Templates use `{variable}` substitution. Available variables:
 | `{venue}` | `Dick's Sporting Goods Park` | Venue name |
 | `{city}` | `Commerce City` | City |
 | `{state}` | `CO` | State code |
+| `{location}` | `Commerce City, CO` or `Berlin` | Smart location (see below) |
 | `{title}` | `Tweezer` | Song title |
 | `{set}` | `1` | Set number |
 | `{track}` | `01` | Zero-padded track number within the set |
@@ -188,30 +259,80 @@ Examples:
 - `{date:YYYY.MM.DD}` → `2024.08.16`
 - `{date:MM/DD/YYYY}` → `08/16/2024`
 
+#### Location formatting
+
+The `{location}` variable intelligently formats the location based on whether it's a US or international show:
+
+**US shows** (2-letter state code):
+- Input: `city="Commerce City"`, `state="CO"`
+- Output: `"Commerce City, CO"`
+
+**International shows** (non-US state code or empty):
+- Input: `city="Berlin"`, `state="16"` (region code)
+- Output: `"Berlin"`
+- Input: `city="London"`, `state=""`
+- Output: `"London"`
+
+**Why use `{location}` instead of `{city}, {state}`:**
+- Avoids awkward trailing commas for international shows
+- Automatically detects US state codes (2 uppercase letters)
+- Cleaner output for mixed US/international show libraries
+
+**Example templates:**
+- `{date} {venue}, {location}` → `"2024-08-16 Dick's, Commerce City, CO"` (US)
+- `{date} {venue}, {location}` → `"2025-11-10 Columbiahalle, Berlin"` (International)
+
 ## Pipeline
 
-1. Parse show info from archive filename (artist, date, venue, city, state)
-2. Load config and resolve band-specific settings
-3. Extract archive to temp directory
-4. Analyze audio files (bit depth, sample rate, existing tags)
-5. Convert to 16-bit/48kHz FLAC if needed (via ffmpeg)
-6. Fetch setlist from configured APIs
-7. Match tracks to setlist songs
-8. Interactive confirmation (skipped in batch/dry-run mode)
-9. Tag FLAC files with metadata (via ffmpeg)
-10. Copy to library using rendered path/filename templates
-11. Clean up temp directory
+1. Parse show info from input name (artist, date, venue, city, state)
+   - For directories: parses parent directory name (usually contains show info)
+   - For archives: parses archive filename
+2. Determine artist if not already known:
+   - Prompt user to select from configured bands (in interactive mode)
+   - Fail with error (in batch/dry-run mode)
+3. Load config and resolve band-specific settings
+4. Prepare working directory:
+   - Archives: extract to temp directory
+   - Directories: use directly (no copy yet)
+5. Analyze audio files (bit depth, sample rate, existing tags)
+6. Determine show date if not already known:
+   - Try to extract from audio metadata
+   - Prompt user interactively (in interactive mode)
+   - Fail with error (in batch/dry-run mode)
+7. Convert to 16-bit/48kHz FLAC if needed:
+   - If conversion needed: transcode directly to temp directory (efficient - no pre-copy)
+   - If no conversion: files remain in original location
+8. Fetch setlist from configured APIs
+9. Match tracks to setlist songs
+10. Interactive confirmation (skipped in batch/dry-run mode)
+11. Copy to temp for tagging (if not already there)
+12. Tag FLAC files with metadata (via ffmpeg in temp directory)
+13. Copy to library using rendered path/filename templates
+14. Clean up temp directory (if created)
 
-### Filename parsing
+### Input name parsing
 
-The archive filename is parsed for show info. Patterns like:
+The archive filename or directory name is parsed for show info. Patterns like:
 
 ```
 King Gizzard & The Lizard Wizard - Live at Forest Hills Stadium, Queens, NY 8-16-24 (washtub).zip
 Phish - 2024-08-16 - Dick's Sporting Goods Park, Commerce City, CO.zip
+2024-08-16 - Dick's Sporting Goods Park/
 ```
 
 CLI flags (`--artist`, `--date`, etc.) override any parsed value.
+
+**Artist determination:**
+If the artist cannot be determined from the filename or directory name:
+1. In **interactive mode**: You'll be prompted to select from configured bands or enter a custom artist name
+2. In **batch mode**: The process will fail with an error - use the `--artist` flag to specify it
+3. In **dry-run mode**: The process will fail with an error - use the `--artist` flag to specify it
+
+**Date determination:**
+If the show date cannot be determined from the filename or directory name:
+1. In **interactive mode**: You'll be prompted to enter the date (YYYY-MM-DD format)
+2. In **batch mode**: The process will fail with an error - use the `--date` flag to specify it
+3. In **dry-run mode**: The process will fail with an error - use the `--date` flag to specify it
 
 ### Track matching
 

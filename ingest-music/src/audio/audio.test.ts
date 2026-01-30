@@ -11,6 +11,7 @@ function makeInfo(
     bitsPerSample,
     sampleRate,
     trackNumber: undefined,
+    discNumber: undefined,
     title: undefined,
     duration: 300,
   };

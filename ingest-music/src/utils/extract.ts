@@ -38,19 +38,38 @@ export function isArchive(filename: string): boolean {
 }
 
 /**
- * Extract an archive to a temporary directory.
- * Supports .zip, .tar.gz/.tgz, and .gz formats.
- * Returns the path to the temp directory containing extracted audio files.
+ * Result of preparing a working directory for processing.
+ */
+export interface WorkingDirectory {
+  /** Path to the directory containing audio files */
+  path: string;
+  /** Whether this directory should be cleaned up after processing */
+  shouldCleanup: boolean;
+}
+
+/**
+ * Prepare a working directory from either an archive or a directory.
+ * - If given an archive (.zip, .tar.gz, .gz): extracts to temp directory (requires cleanup)
+ * - If given a directory: uses it directly (no copy, no cleanup yet)
+ * Returns the directory path and whether cleanup is needed.
  */
 export async function extractArchive(
-  archivePath: string,
+  inputPath: string,
   onProgress?: ProgressCallback,
-): Promise<string> {
-  const format = detectArchiveFormat(archivePath);
+): Promise<WorkingDirectory> {
+  // Check if input is a directory
+  const stats = await fs.stat(inputPath);
+  if (stats.isDirectory()) {
+    onProgress?.(`Using directory: ${inputPath}`);
+    return { path: inputPath, shouldCleanup: false };
+  }
+
+  // Input is a file - must be an archive
+  const format = detectArchiveFormat(inputPath);
   if (!format) {
     throw new Error(
-      `Unsupported archive format: ${path.basename(archivePath)}\n` +
-        `Supported formats: .zip, .tar.gz, .tgz, .gz`,
+      `Unsupported input: ${path.basename(inputPath)}\n` +
+        `Expected a directory or archive (.zip, .tar.gz, .tgz, .gz)`,
     );
   }
 
@@ -59,20 +78,20 @@ export async function extractArchive(
 
   switch (format) {
     case "zip":
-      await extractZip(archivePath, tmpDir, onProgress);
+      await extractZip(inputPath, tmpDir, onProgress);
       break;
     case "tar.gz":
-      await extractTarGz(archivePath, tmpDir, onProgress);
+      await extractTarGz(inputPath, tmpDir, onProgress);
       break;
     case "gz":
-      await extractGz(archivePath, tmpDir, onProgress);
+      await extractGz(inputPath, tmpDir, onProgress);
       break;
   }
 
   // Flatten: move all files up to tmpDir root
   await flattenAllFiles(tmpDir, onProgress);
 
-  return tmpDir;
+  return { path: tmpDir, shouldCleanup: true };
 }
 
 /**
@@ -174,6 +193,31 @@ async function walkDir(dir: string): Promise<string[]> {
 }
 
 /**
+ * Recursively copy a directory and all its contents.
+ */
+async function copyDirectory(
+  srcDir: string,
+  destDir: string,
+  onProgress?: ProgressCallback
+): Promise<void> {
+  await fs.mkdir(destDir, { recursive: true });
+
+  const entries = await fs.readdir(srcDir);
+  for (const entry of entries) {
+    const srcPath = path.join(srcDir, entry);
+    const destPath = path.join(destDir, entry);
+    const stats = await fs.stat(srcPath);
+
+    if (stats.isDirectory()) {
+      await copyDirectory(srcPath, destPath, onProgress);
+    } else {
+      onProgress?.(`  Copying: ${entry}`);
+      await fs.copyFile(srcPath, destPath);
+    }
+  }
+}
+
+/**
  * List audio files in a directory (non-recursive, root level only).
  */
 /**
@@ -200,6 +244,8 @@ export async function listAudioFiles(
   return entries
     .filter((e) => !shouldExcludeFile(e, excludePatterns))
     .filter((e) => AUDIO_EXTENSIONS.has(path.extname(e).toLowerCase()))
+    // Exclude temporary conversion files (artifacts from previous runs)
+    .filter((e) => !e.endsWith("_converted.flac"))
     .map((e) => path.join(dir, e));
 }
 

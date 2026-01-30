@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import { parseFile } from "music-metadata";
 import type { AudioInfo, ProgressCallback, BandConfig } from "../config/types.js";
 import {
@@ -163,34 +164,111 @@ export async function convertAudio(
 }
 
 /**
+ * Convert an audio file to a specific target directory.
+ * Returns the path to the converted file in the target directory.
+ */
+export async function convertAudioToTarget(
+  info: AudioInfo,
+  targetDir: string,
+  bandConfig: BandConfig,
+  onProgress?: ProgressCallback
+): Promise<string> {
+  const rule = findMatchingRule(info);
+  const filePath = info.filePath;
+  const base = path.basename(filePath, path.extname(filePath));
+  const outPath = path.join(targetDir, `${base}.flac`);
+
+  // Build conversion description
+  const targetDesc: string[] = [];
+  if (rule.target.bitDepth) targetDesc.push(`${rule.target.bitDepth}-bit`);
+  if (rule.target.sampleRate) targetDesc.push(`${rule.target.sampleRate / 1000}kHz`);
+  const desc = targetDesc.length > 0 ? targetDesc.join("/") : "FLAC";
+
+  onProgress?.(`  Converting: ${path.basename(filePath)} -> ${desc} (${rule.name})`);
+
+  const args = buildConversionArgs(rule, bandConfig, filePath, outPath);
+  await execFileAsync("ffmpeg", args);
+
+  return outPath;
+}
+
+/**
  * Convert all audio files that need it based on conversion rules.
+ * If conversion is needed and files are not in temp, creates a temp directory.
+ * Returns updated audio infos and working directory info.
  */
 export async function convertAllIfNeeded(
   audioInfos: AudioInfo[],
+  workingDir: { path: string; shouldCleanup: boolean },
   bandConfig: BandConfig,
   skipConversion: boolean,
   onProgress?: ProgressCallback
-): Promise<AudioInfo[]> {
+): Promise<{ audioInfos: AudioInfo[]; workingDir: { path: string; shouldCleanup: boolean } }> {
   if (skipConversion) {
     onProgress?.("Skipping audio conversion (--skip-conversion)");
-    return audioInfos;
+    return { audioInfos, workingDir };
   }
 
   const toConvert = audioInfos.filter(needsConversion);
   if (toConvert.length === 0) {
     onProgress?.("No conversion needed");
-    return audioInfos;
+    return { audioInfos, workingDir };
+  }
+
+  // Check if we're already in a temp directory
+  const isInTemp = workingDir.path.startsWith(os.tmpdir());
+
+  let targetDir = workingDir.path;
+  let shouldCleanup = workingDir.shouldCleanup;
+
+  if (!isInTemp) {
+    // Create temp directory for converted files
+    targetDir = await fs.mkdtemp(path.join(os.tmpdir(), "ingest-music-"));
+    shouldCleanup = true;
+    onProgress?.(`Converting to temp directory: ${targetDir}`);
   }
 
   onProgress?.(`Converting ${toConvert.length} file(s)...`);
+  const convertedPaths: Map<string, string> = new Map();
+
   for (const info of toConvert) {
-    await convertAudio(info, bandConfig, onProgress);
+    const newPath = await convertAudioToTarget(info, targetDir, bandConfig, onProgress);
+    convertedPaths.set(info.filePath, newPath);
   }
 
-  // Re-analyze converted files
+  // Update audio infos with new paths
+  const updatedInfos = audioInfos.map(info => {
+    const newPath = convertedPaths.get(info.filePath);
+    if (newPath) {
+      return { ...info, filePath: newPath };
+    }
+    // If not converted, copy to temp if we created a temp dir
+    if (!isInTemp && targetDir !== workingDir.path) {
+      return { ...info, filePath: path.join(targetDir, path.basename(info.filePath)) };
+    }
+    return info;
+  });
+
+  // Copy non-converted files to temp if needed
+  if (!isInTemp && targetDir !== workingDir.path) {
+    for (const info of audioInfos) {
+      if (!convertedPaths.has(info.filePath)) {
+        const destPath = path.join(targetDir, path.basename(info.filePath));
+        onProgress?.(`  Copying: ${path.basename(info.filePath)}`);
+        await fs.copyFile(info.filePath, destPath);
+      }
+    }
+  }
+
+  // Re-analyze all files in the target directory
   onProgress?.("Re-analyzing converted files...");
-  return analyzeAllAudio(
-    audioInfos.map((i) => i.filePath),
+  const finalInfos = await analyzeAllAudio(
+    updatedInfos.map((i) => i.filePath),
     onProgress
   );
+
+  return {
+    audioInfos: finalInfos,
+    workingDir: { path: targetDir, shouldCleanup }
+  };
 }

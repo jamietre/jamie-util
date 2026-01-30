@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { detectArchiveFormat, isArchive } from "./extract.js";
+import { detectArchiveFormat, isArchive, extractArchive } from "./extract.js";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import * as os from "node:os";
 
 describe("detectArchiveFormat", () => {
   it("detects .zip", () => {
@@ -43,5 +46,34 @@ describe("isArchive", () => {
   it("is case-insensitive", () => {
     expect(isArchive("Show.ZIP")).toBe(true);
     expect(isArchive("SHOW.TAR.GZ")).toBe(true);
+  });
+});
+
+describe("extractArchive", () => {
+  it("uses directory directly with shouldCleanup=false", async () => {
+    // Create a temporary directory with a test file
+    const srcDir = await fs.mkdtemp(path.join(os.tmpdir(), "test-extract-src-"));
+    const testFile = path.join(srcDir, "test.txt");
+    await fs.writeFile(testFile, "test content");
+
+    try {
+      const result = await extractArchive(srcDir);
+
+      // Should use the same directory
+      expect(result.path).toBe(srcDir);
+      expect(result.shouldCleanup).toBe(false);
+
+      // File should still be there
+      const content = await fs.readFile(testFile, "utf-8");
+      expect(content).toBe("test content");
+    } finally {
+      // Clean up source directory
+      await fs.rm(srcDir, { recursive: true, force: true });
+    }
+  });
+
+  it("throws error for non-existent path", async () => {
+    const nonExistentPath = "/tmp/this-does-not-exist-12345678";
+    await expect(extractArchive(nonExistentPath)).rejects.toThrow();
   });
 });

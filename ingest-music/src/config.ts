@@ -13,19 +13,7 @@ const DEFAULT_CONFIG: Config = {
     genre: "Live",
     targetPathTemplate: "{artist}/{date} - {venue}, {city}, {state}",
     fileNameTemplate: "{date} S{set} T{track} - {title}.flac",
-    fileNameTemplateSingleSet: "{date} T{track} - {title}.flac",
     encoreInSet2: true,
-    conversion: {
-      flac: {
-        compressionLevel: 8,
-      },
-    },
-    excludePatterns: [
-      "^\\._", // macOS resource fork files (AppleDouble format)
-      "^\\.DS_Store$", // macOS folder metadata
-      "^Thumbs\\.db$", // Windows thumbnails
-      "^\\.", // Other hidden files
-    ],
   },
   bands: {},
 };
@@ -42,6 +30,7 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
   const candidates = [
     explicitPath,
     path.join(os.homedir(), ".config", "ingest-music", "config.json"),
+
     path.resolve("ingest-music.json"),
   ].filter(Boolean) as string[];
 
@@ -86,30 +75,14 @@ export function mergeConfig(
 }
 
 /**
- * Resolve band-specific config by matching the artist name against
- * each band's patterns (regex, case-insensitive), then merging over defaults.
+ * Resolve band-specific config by looking up the artist name (lowercased)
+ * in the bands map, then merging over defaults.
  */
 export function resolveBandConfig(config: Config, artist: string): BandConfig {
-  // Search through all bands for a pattern match
-  for (const [key, bandOverride] of Object.entries(config.bands)) {
-    if (bandOverride.patterns) {
-      const matches = bandOverride.patterns.some(pattern => {
-        try {
-          // Treat pattern as a regular expression (case-insensitive)
-          const regex = new RegExp(pattern, 'i');
-          return regex.test(artist);
-        } catch (e) {
-          // If regex is invalid, fall back to exact match (case-insensitive)
-          console.warn(`Invalid regex pattern "${pattern}": ${e instanceof Error ? e.message : String(e)}`);
-          return pattern.toLowerCase() === artist.toLowerCase();
-        }
-      });
-      if (matches) {
-        return { ...config.defaults, ...bandOverride };
-      }
-    }
+  const key = artist.toLowerCase();
+  const bandOverride = config.bands[key];
+  if (bandOverride) {
+    return { ...config.defaults, ...bandOverride };
   }
-
-  // No match found, return defaults
   return { ...config.defaults };
 }
