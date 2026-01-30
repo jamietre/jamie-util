@@ -1,6 +1,9 @@
-# photo-sync
+# Photo Sync
 
 Copy photos from an Android phone mount to an organized archive, sorting by year/month based on EXIF metadata.
+
+This was built for Windows. It works only in WSL2. It's kind of a pain to mount an android device in Windows, this seemed like the least painful way to achieve this. I like WSL anyway.
+
 
 ## Installation
 

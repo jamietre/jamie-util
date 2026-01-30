@@ -22,8 +22,12 @@ describe("detectArchiveFormat", () => {
     expect(detectArchiveFormat("track.flac.gz")).toBe("gz");
   });
 
+  it("detects .rar", () => {
+    expect(detectArchiveFormat("show.rar")).toBe("rar");
+    expect(detectArchiveFormat("SHOW.RAR")).toBe("rar");
+  });
+
   it("returns null for unsupported formats", () => {
-    expect(detectArchiveFormat("show.rar")).toBeNull();
     expect(detectArchiveFormat("show.7z")).toBeNull();
     expect(detectArchiveFormat("readme.txt")).toBeNull();
   });
@@ -35,11 +39,11 @@ describe("isArchive", () => {
     expect(isArchive("show.tar.gz")).toBe(true);
     expect(isArchive("show.tgz")).toBe(true);
     expect(isArchive("show.gz")).toBe(true);
+    expect(isArchive("show.rar")).toBe(true);
   });
 
   it("rejects non-archive files", () => {
     expect(isArchive("show.flac")).toBe(false);
-    expect(isArchive("show.rar")).toBe(false);
     expect(isArchive("readme.txt")).toBe(false);
   });
 

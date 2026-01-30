@@ -1,5 +1,5 @@
 {
-  "libraryBasePath": "P:/MusicLibrary/LiveMusic",
+  "libraryBasePath": "/path/to/library",
   "setlistSources": {
     "setlist.fm": {
       "apiKey": "your-setlist-fm-api-key",

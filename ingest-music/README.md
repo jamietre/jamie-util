@@ -2,6 +2,10 @@
 
 Process concert recording archives or directories into an organized, tagged music library. Parses show info from filenames/directory names, fetches setlists from phish.net, kglw.net, or setlist.fm, matches tracks to songs, tags FLAC files, and copies them into a structured library.
 
+## Why
+
+I download live recordings a lot, but they come in all different formats depending on who created them. I want filenames, mp3 tags, encoding, and folder structure to be consistent and to my tastes. This is a command-line tool to simplify the process of ingesting things I download into my music library.
+
 ## Prerequisites
 
 - Node.js 18+
@@ -79,7 +83,7 @@ ARGUMENTS
 
 ### Supported input formats
 
-- **Archives**: `.zip`, `.tar.gz` / `.tgz`, `.gz` - extracted to temp directory
+- **Archives**: `.zip`, `.rar`, `.tar.gz` / `.tgz`, `.gz` - extracted to temp directory
 - **Directories**: Pass a folder path directly - contents copied to temp directory for processing
 
 **Note:**
@@ -172,7 +176,9 @@ Each entry under `setlistSources` has:
 
 Supported sources: `phish.net`, `kglw.net`, `setlist.fm`.
 
-**Note:** kglw.net does not require an API key. Use an empty string for the `apiKey` field.
+**Notes:**
+- kglw.net does not require an API key. Use an empty string for the `apiKey` field.
+- phish.net automatically filters by artist when multiple shows exist on the same date (e.g., Phish vs. Trey Anastasio Band on 2000-09-30).
 
 #### Band/default settings
 

@@ -1,6 +1,4 @@
-# Sync Android Phone
-
-
+# Notes on mounting android phone for data transfer in Windows/WSL
 
 ## Native way
 

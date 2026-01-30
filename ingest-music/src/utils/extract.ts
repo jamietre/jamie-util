@@ -6,12 +6,13 @@ import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 import { open } from "yauzl-promise";
 import * as tar from "tar";
+import { createExtractorFromFile } from "node-unrar-js";
 import type { ProgressCallback } from "../config/types.js";
 
 const AUDIO_EXTENSIONS = new Set([".flac", ".wav", ".shn"]);
 
 /** Supported archive extensions and their format identifiers */
-type ArchiveFormat = "zip" | "tar.gz" | "gz";
+type ArchiveFormat = "zip" | "tar.gz" | "gz" | "rar";
 
 /**
  * Detect archive format from filename.
@@ -21,13 +22,14 @@ export function detectArchiveFormat(filePath: string): ArchiveFormat | null {
   if (lower.endsWith(".zip")) return "zip";
   if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) return "tar.gz";
   if (lower.endsWith(".gz") && !lower.endsWith(".tar.gz")) return "gz";
+  if (lower.endsWith(".rar")) return "rar";
   return null;
 }
 
 /**
  * List of file extensions recognized as archives for batch mode.
  */
-export const ARCHIVE_EXTENSIONS = [".zip", ".tar.gz", ".tgz", ".gz"];
+export const ARCHIVE_EXTENSIONS = [".zip", ".tar.gz", ".tgz", ".gz", ".rar"];
 
 /**
  * Check if a filename is a supported archive.
@@ -69,7 +71,7 @@ export async function extractArchive(
   if (!format) {
     throw new Error(
       `Unsupported input: ${path.basename(inputPath)}\n` +
-        `Expected a directory or archive (.zip, .tar.gz, .tgz, .gz)`,
+        `Expected a directory or archive (.zip, .tar.gz, .tgz, .gz, .rar)`,
     );
   }
 
@@ -85,6 +87,9 @@ export async function extractArchive(
       break;
     case "gz":
       await extractGz(inputPath, tmpDir, onProgress);
+      break;
+    case "rar":
+      await extractRar(inputPath, tmpDir, onProgress);
       break;
   }
 
@@ -149,6 +154,33 @@ async function extractGz(
     createGunzip(),
     createWriteStream(outPath),
   );
+}
+
+/**
+ * Extract a .rar archive using node-unrar-js.
+ */
+async function extractRar(
+  archivePath: string,
+  destDir: string,
+  onProgress?: ProgressCallback,
+): Promise<void> {
+  onProgress?.("  Extracting RAR archive...");
+
+  // Create extractor
+  const extractor = await createExtractorFromFile({
+    filepath: archivePath,
+    targetPath: destDir,
+  });
+
+  // Get file list and extract all
+  const { fileHeaders } = extractor.getFileList();
+  const extracted = extractor.extract();
+
+  // Log progress for each file
+  for (const file of extracted.files) {
+    if (file.fileHeader.flags.directory) continue;
+    onProgress?.(`  Extracting: ${path.basename(file.fileHeader.name)}`);
+  }
 }
 
 /**

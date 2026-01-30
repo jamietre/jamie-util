@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   parsePhishNetResponse,
+  parsePhishNetShowResponse,
+  parsePhishNetSetlistResponse,
   parseKGLWResponse,
   parseSetlistFmResponse,
 } from "./setlist.js";
@@ -78,6 +80,99 @@ describe("parsePhishNetResponse", () => {
     const result = parsePhishNetResponse(data, showInfo);
     expect(result.source).toBe("phish.net");
     expect(result.url).toBe("https://phish.net/setlists/?d=2024-08-16");
+  });
+});
+
+describe("parsePhishNetSetlistResponse", () => {
+  it("combines show metadata with setlist songs", () => {
+    const show = {
+      showid: "123",
+      showdate: "2024-08-16",
+      artist_name: "Phish",
+      artistid: 1,
+      venuename: "Dick's Sporting Goods Park",
+      city: "Commerce City",
+      state: "CO",
+    };
+    const songs = [
+      { song: "Tweezer", set: "1", position: 1 },
+      { song: "Fluffhead", set: "2", position: 1 },
+      { song: "First Tube", set: "E", position: 1 },
+    ];
+    const result = parsePhishNetSetlistResponse(show, songs, showInfo);
+    expect(result.artist).toBe("Phish");
+    expect(result.venue).toBe("Dick's Sporting Goods Park");
+    expect(result.songs).toHaveLength(3);
+    expect(result.songs[0]).toEqual({ title: "Tweezer", set: 1, position: 1 });
+    expect(result.songs[2]).toEqual({ title: "First Tube", set: 3, position: 1 });
+  });
+
+  it("handles empty setlist", () => {
+    const show = {
+      showid: "123",
+      showdate: "2024-08-16",
+      artist_name: "Phish",
+      artistid: 1,
+    };
+    const result = parsePhishNetSetlistResponse(show, [], showInfo);
+    expect(result.songs).toHaveLength(0);
+  });
+
+  it("falls back to showInfo when show data is missing", () => {
+    const show = {
+      showid: "123",
+      showdate: "2024-08-16",
+    };
+    const songs = [{ song: "Song", set: "1", position: 1 }];
+    const result = parsePhishNetSetlistResponse(show, songs, showInfo);
+    expect(result.artist).toBe("Phish");
+    expect(result.venue).toBe("Dick's Sporting Goods Park");
+    expect(result.city).toBe("Commerce City");
+  });
+
+  it("includes correct source and URL", () => {
+    const show = {
+      showid: "123",
+      showdate: "2024-08-16",
+    };
+    const songs = [{ song: "Song", set: "1", position: 1 }];
+    const result = parsePhishNetSetlistResponse(show, songs, showInfo);
+    expect(result.source).toBe("phish.net");
+    expect(result.url).toBe("https://phish.net/setlists/?d=2024-08-16");
+  });
+});
+
+describe("parsePhishNetShowResponse (legacy)", () => {
+  it("parses show with artist_name and setlistdata", () => {
+    const show = {
+      showid: "123",
+      showdate: "2024-08-16",
+      artist_name: "Phish",
+      artistid: 1,
+      venuename: "Dick's Sporting Goods Park",
+      city: "Commerce City",
+      state: "CO",
+      setlistdata: [
+        { song: "Tweezer", set: "1", position: 1 },
+        { song: "Fluffhead", set: "2", position: 1 },
+      ],
+    };
+    const result = parsePhishNetShowResponse(show, showInfo);
+    expect(result.artist).toBe("Phish");
+    expect(result.venue).toBe("Dick's Sporting Goods Park");
+    expect(result.songs).toHaveLength(2);
+    expect(result.songs[0].title).toBe("Tweezer");
+  });
+
+  it("handles missing setlistdata", () => {
+    const show = {
+      showid: "123",
+      showdate: "2024-08-16",
+      artist_name: "Phish",
+      artistid: 1,
+    };
+    const result = parsePhishNetShowResponse(show, showInfo);
+    expect(result.songs).toHaveLength(0);
   });
 });
 

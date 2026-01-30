@@ -49,24 +49,55 @@ export async function fetchSetlist(
 
 /**
  * Fetch setlist from phish.net API.
+ * First fetches show metadata to identify the correct show (when multiple shows on same date),
+ * then fetches the actual setlist data.
  */
 async function fetchPhishNet(
   showInfo: ShowInfo,
   sourceConfig: SetlistSourceConfig,
 ): Promise<Setlist> {
   const baseUrl = sourceConfig.url ?? "https://api.phish.net/v5";
-  const url = `${baseUrl}/setlists/showdate/${showInfo.date}.json?apikey=${encodeURIComponent(sourceConfig.apiKey)}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status} ${response.statusText}`);
+
+  // Step 1: Get show metadata to identify the correct show
+  const showsUrl = `${baseUrl}/shows/showdate/${showInfo.date}.json?apikey=${encodeURIComponent(sourceConfig.apiKey)}`;
+  const showsResponse = await fetch(showsUrl);
+  if (!showsResponse.ok) {
+    throw new Error(`API error: ${showsResponse.status} ${showsResponse.statusText}`);
   }
 
-  const data = (await response.json()) as PhishNetResponse;
-  if (!data.data || data.data.length === 0) {
-    throw new Error(`No setlist found for ${showInfo.date}`);
+  const showsData = (await showsResponse.json()) as PhishNetShowsResponse;
+  if (!showsData.data || showsData.data.length === 0) {
+    throw new Error(`No show found for ${showInfo.date}`);
   }
 
-  return parsePhishNetResponse(data, showInfo);
+  // Filter shows by artist name if multiple shows on same date
+  let show = showsData.data[0];
+  if (showsData.data.length > 1) {
+    const matchingShow = showsData.data.find((s) =>
+      s.artist_name?.toLowerCase() === showInfo.artist.toLowerCase()
+    );
+    if (!matchingShow) {
+      const artists = showsData.data.map((s) => s.artist_name).join(", ");
+      throw new Error(
+        `Multiple shows found for ${showInfo.date} (${artists}), but none match artist "${showInfo.artist}"`
+      );
+    }
+    show = matchingShow;
+  }
+
+  // Step 2: Fetch the actual setlist data using showid
+  const setlistUrl = `${baseUrl}/setlists/showid/${show.showid}.json?apikey=${encodeURIComponent(sourceConfig.apiKey)}`;
+  const setlistResponse = await fetch(setlistUrl);
+  if (!setlistResponse.ok) {
+    throw new Error(`API error fetching setlist: ${setlistResponse.status} ${setlistResponse.statusText}`);
+  }
+
+  const setlistData = (await setlistResponse.json()) as PhishNetSetlistResponse;
+  if (!setlistData.data || setlistData.data.length === 0) {
+    throw new Error(`No setlist data found for show ${show.showid}`);
+  }
+
+  return parsePhishNetSetlistResponse(show, setlistData.data, showInfo);
 }
 
 /**
@@ -134,7 +165,22 @@ async function fetchSetlistFm(
 
 // --- phish.net types and parsing ---
 
-interface PhishNetResponse {
+interface PhishNetShowsResponse {
+  data: PhishNetShow[];
+}
+
+interface PhishNetShow {
+  showid: string;
+  showdate: string;
+  artist_name?: string;
+  artistid?: number;
+  venuename?: string;
+  venue?: string;
+  city?: string;
+  state?: string;
+}
+
+interface PhishNetSetlistResponse {
   data: PhishNetSong[];
 }
 
@@ -147,8 +193,62 @@ interface PhishNetSong {
   state?: string;
 }
 
+export function parsePhishNetSetlistResponse(
+  show: PhishNetShow,
+  songs: PhishNetSong[],
+  showInfo: ShowInfo,
+): Setlist {
+  const setlistSongs: SetlistSong[] = songs.map((item) => ({
+    title: item.song,
+    set: parsePhishNetSet(item.set),
+    position: item.position,
+  }));
+
+  // Build phish.net URL for this show
+  const setlistUrl = `https://phish.net/setlists/?d=${showInfo.date}`;
+
+  return {
+    artist: show.artist_name ?? showInfo.artist,
+    date: showInfo.date,
+    venue: show.venuename ?? show.venue ?? showInfo.venue,
+    city: show.city ?? showInfo.city,
+    state: show.state ?? showInfo.state,
+    songs: setlistSongs,
+    source: "phish.net",
+    url: setlistUrl,
+  };
+}
+
+// Legacy function for backward compatibility with old show response format
+export function parsePhishNetShowResponse(
+  show: PhishNetShow & { setlistdata?: PhishNetSong[] },
+  showInfo: ShowInfo,
+): Setlist {
+  const setlistData = show.setlistdata ?? [];
+  const songs: SetlistSong[] = setlistData.map((item) => ({
+    title: item.song,
+    set: parsePhishNetSet(item.set),
+    position: item.position,
+  }));
+
+  // Build phish.net URL for this show
+  const setlistUrl = `https://phish.net/setlists/?d=${showInfo.date}`;
+
+  return {
+    artist: show.artist_name ?? showInfo.artist,
+    date: showInfo.date,
+    venue: show.venuename ?? show.venue ?? showInfo.venue,
+    city: show.city ?? showInfo.city,
+    state: show.state ?? showInfo.state,
+    songs,
+    source: "phish.net",
+    url: setlistUrl,
+  };
+}
+
+// Legacy function for backward compatibility with tests
 export function parsePhishNetResponse(
-  data: PhishNetResponse,
+  data: { data: Array<PhishNetSong & { venue?: string; city?: string; state?: string }> },
   showInfo: ShowInfo,
 ): Setlist {
   const songs: SetlistSong[] = data.data.map((item) => ({
@@ -157,7 +257,6 @@ export function parsePhishNetResponse(
     position: item.position,
   }));
 
-  // Build phish.net URL for this show
   const setlistUrl = `https://phish.net/setlists/?d=${showInfo.date}`;
 
   return {
