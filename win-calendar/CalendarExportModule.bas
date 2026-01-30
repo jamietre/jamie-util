@@ -1,5 +1,5 @@
 ' CalendarExportModule for Outlook (64-bit Office)
-' Exports calendar data to JSON for Meeting Reminder app
+' Exports calendar data to JSON for WinCalendar app
 '
 ' Put this in a STANDARD MODULE (Insert -> Module)
 ' To start: Alt+F8 -> StartCalendarExport
@@ -10,7 +10,7 @@ Option Explicit
 ' === CONFIGURATION ===
 Public Const EXPORT_INTERVAL_MS As Long = 30000
 Public Const LOOKAHEAD_MINUTES As Integer = 5760
-Public Const OUTPUT_FOLDER As String = ".outlook-automation"
+Public Const OUTPUT_FOLDER As String = ".config\win-calendar"
 
 ' === WINDOWS API (64-bit) ===
 Private Declare PtrSafe Function SetTimer Lib "user32" (ByVal hwnd As LongPtr, ByVal nIDEvent As LongPtr, ByVal uElapse As Long, ByVal lpTimerFunc As LongPtr) As LongPtr
@@ -58,7 +58,7 @@ Private Sub ShowStatus(ByVal message As String)
     ' Create a simple userform programmatically
     Set pNotifyForm = CreateObject("Forms.Form.1")
     With pNotifyForm
-        .Caption = "Meeting Reminder"
+        .Caption = "WinCalendar"
         .Width = 350
         .Height = 80
         .StartUpPosition = 0 ' Manual

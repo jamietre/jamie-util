@@ -4,7 +4,7 @@ using WinCalendar;
 using var mutex = new Mutex(true, "WinCalendarApp", out bool createdNew);
 if (!createdNew)
 {
-    MessageBox.Show("Meeting Reminder is already running.", "Meeting Reminder", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    MessageBox.Show("WinCalendar is already running.", "WinCalendar", MessageBoxButtons.OK, MessageBoxIcon.Information);
     return;
 }
 

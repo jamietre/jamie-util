@@ -7,12 +7,12 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>MeetingReminder</AssemblyName>
-    <RootNamespace>MeetingReminder</RootNamespace>
+    <AssemblyName>WinCalendar</AssemblyName>
+    <RootNamespace>WinCalendar</RootNamespace>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>false</SelfContained>
     <!-- Fixed Application ID for consistent taskbar/notification identity -->
-    <ApplicationId>com.treworgy.MeetingReminder</ApplicationId>
+    <ApplicationId>com.treworgy.WinCalendar</ApplicationId>
   </PropertyGroup>
 
   <ItemGroup>

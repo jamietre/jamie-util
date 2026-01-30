@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace MeetingReminder;
+namespace WinCalendar;
 
 /// <summary>
 /// Calendar source that reads meetings from a local JSON file.

@@ -2,7 +2,7 @@ using Microsoft.Toolkit.Uwp.Notifications;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace MeetingReminder;
+namespace WinCalendar;
 
 public class ReminderService
 {
@@ -25,11 +25,11 @@ public class ReminderService
 
     public ReminderService()
     {
-        DataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".outlook-automation");
+        DataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "win-calendar");
         Directory.CreateDirectory(DataFolder);
 
-        _stateFile = Path.Combine(DataFolder, "reminder-state-dotnet.json");
-        _logFile = Path.Combine(DataFolder, "dotnet-app.log");
+        _stateFile = Path.Combine(DataFolder, "reminder-state.json");
+        _logFile = Path.Combine(DataFolder, "app.log");
 
         // Initialize calendar source manager
         _sourceManager = new CalendarSourceManager(Log);
@@ -91,7 +91,7 @@ public class ReminderService
         {
             var defaultPath = Path.Combine(DataFolder, "calendar-data.json");
             _sourceManager.AddSource(new FileCalendarSource(defaultPath, Log));
-            Log("Using default file calendar source");
+            Log("Using default file calendar source (calendar-data.json)");
         }
     }
 
@@ -220,7 +220,7 @@ public class ReminderService
         var builder = new ToastContentBuilder()
             .AddText(title)
             .AddText(message)
-            .AddAttributionText("Meeting Reminder")
+            .AddAttributionText("WinCalendar")
             .AddArgument("action", $"snooze/{encodedKey}/{snooze30s}")
             .SetToastScenario(ToastScenario.Reminder);
 

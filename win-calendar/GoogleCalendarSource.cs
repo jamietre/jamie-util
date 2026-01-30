@@ -4,7 +4,7 @@ using Google.Apis.Calendar.v3.Data;
 using Google.Apis.Services;
 using Google.Apis.Util.Store;
 
-namespace MeetingReminder;
+namespace WinCalendar;
 
 /// <summary>
 /// Calendar source that fetches meetings from Google Calendar using OAuth2.
@@ -13,7 +13,7 @@ namespace MeetingReminder;
 public class GoogleCalendarSource : ICalendarSource
 {
     private static readonly string[] Scopes = { CalendarService.Scope.CalendarReadonly };
-    private const string ApplicationName = "Meeting Reminder";
+    private const string ApplicationName = "WinCalendar";
 
     private readonly string _credentialsPath;
     private readonly string _calendarId;
@@ -42,7 +42,7 @@ public class GoogleCalendarSource : ICalendarSource
         // Store token in user's config directory
         _tokenPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".config", "meeting-reminder");
+            ".config", "win-calendar", "google-token");
     }
 
     public async Task<List<Meeting>> GetMeetingsAsync(DateTime startDate, DateTime endDate)
@@ -63,8 +63,12 @@ public class GoogleCalendarSource : ICalendarSource
             startDate.Date >= _cachedStartDate.Date &&
             endDate.Date <= _cachedEndDate.Date)
         {
-            _log?.Invoke($"Google Calendar: returning {_cachedMeetings.Count} cached events");
-            return _cachedMeetings;
+            // Filter cached meetings to requested date range
+            var filtered = _cachedMeetings
+                .Where(m => m.Start.Date >= startDate.Date && m.Start.Date <= endDate.Date)
+                .ToList();
+            _log?.Invoke($"Google Calendar: returning {filtered.Count} cached events (filtered from {_cachedMeetings.Count})");
+            return filtered;
         }
 
         try
@@ -103,7 +107,7 @@ public class GoogleCalendarSource : ICalendarSource
                 var start = eventItem.Start.DateTimeDateTimeOffset.Value.LocalDateTime;
                 var end = eventItem.End.DateTimeDateTimeOffset.Value.LocalDateTime;
 
-                meetings.Add(new Meeting
+                var meeting = new Meeting
                 {
                     Subject = eventItem.Summary ?? "(No title)",
                     Start = start,
@@ -114,17 +118,25 @@ public class GoogleCalendarSource : ICalendarSource
                     OptionalAttendees = eventItem.Attendees?.Count(a => a.Optional.GetValueOrDefault()) ?? 0,
                     MinutesUntilStart = (start - now).TotalMinutes,
                     Source = Name
-                });
+                };
+
+                _log?.Invoke($"  Google event: '{meeting.Subject}' at {meeting.Start:yyyy-MM-dd HH:mm} (ID: {eventItem.Id})");
+                meetings.Add(meeting);
             }
 
-            // Update cache
+            // Update cache with all fetched meetings
             _cachedMeetings = meetings;
             _cacheTime = now;
             _cachedStartDate = fetchStart;
             _cachedEndDate = fetchEnd;
 
-            _log?.Invoke($"Google Calendar: fetched {meetings.Count} events (cache updated)");
-            return meetings;
+            // Filter to requested date range
+            var filtered = meetings
+                .Where(m => m.Start.Date >= startDate.Date && m.Start.Date <= endDate.Date)
+                .ToList();
+
+            _log?.Invoke($"Google Calendar: fetched {meetings.Count} events, returning {filtered.Count} for requested range (cache updated)");
+            return filtered;
         }
         catch (Exception ex)
         {

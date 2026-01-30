@@ -1,4 +1,4 @@
-namespace MeetingReminder;
+namespace WinCalendar;
 
 /// <summary>
 /// Manages multiple calendar sources and provides unified access to meetings.
@@ -96,7 +96,12 @@ public class CalendarSourceManager
         }
 
         // Deduplicate meetings by subject + start time
+        var beforeCount = allMeetings.Count;
         var deduplicated = DeduplicateMeetings(allMeetings);
+        if (beforeCount != deduplicated.Count)
+        {
+            _log?.Invoke($"Deduplication: {beforeCount} meetings -> {deduplicated.Count} after removing duplicates");
+        }
 
         // Update MinutesUntilStart for all meetings
         var now = DateTime.Now;

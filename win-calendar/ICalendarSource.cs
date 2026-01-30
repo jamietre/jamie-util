@@ -1,4 +1,4 @@
-namespace MeetingReminder;
+namespace WinCalendar;
 
 /// <summary>
 /// Interface for calendar data sources that provide meeting information.

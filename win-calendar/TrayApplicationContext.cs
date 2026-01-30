@@ -71,7 +71,7 @@ public class TrayApplicationContext : ApplicationContext
             Icon = CreateTrayIcon(),
             ContextMenuStrip = _contextMenu,
             Visible = true,
-            Text = "Meeting Reminder"
+            Text = "WinCalendar"
         };
 
         _trayIcon.DoubleClick += (s, e) => ShowMeetingsDialog();
@@ -149,7 +149,7 @@ public class TrayApplicationContext : ApplicationContext
         var meetings = _reminderService.GetUpcomingMeetings();
         var count = meetings.Count;
         _statusMenuItem.Text = $"Status: {count} upcoming meeting{(count == 1 ? "" : "s")}";
-        _trayIcon.Text = $"Meeting Reminder - {count} upcoming";
+        _trayIcon.Text = $"WinCalendar - {count} upcoming";
     }
 
     private void ClearNotifications()
@@ -181,7 +181,7 @@ public class TrayApplicationContext : ApplicationContext
             ? "No upcoming meetings in the next hour."
             : $"Upcoming meetings:\n\n" + string.Join("\n", meetings.Select(m => $"- {m.Subject} at {m.Start:HH:mm}"));
 
-        MessageBox.Show(message, "Meeting Reminder Status", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        MessageBox.Show(message, "WinCalendar Status", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void ShowMeetingsDialog()
@@ -269,8 +269,8 @@ public class TrayApplicationContext : ApplicationContext
         var aboutItem = new ToolStripMenuItem("About", null, (s, e) =>
         {
             MessageBox.Show(
-                $"Meeting Reminder\nVersion {Version}\n\nA simple meeting reminder app for Outlook.",
-                "About Meeting Reminder",
+                $"WinCalendar\nVersion {Version}\n\nA Windows calendar reminder app with support for Outlook and Google Calendar.",
+                "About WinCalendar",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
         });
@@ -842,22 +842,39 @@ public class TrayApplicationContext : ApplicationContext
 
     private static string FormatTimeSpan(TimeSpan span)
     {
-        var hours = (int)span.TotalHours;
+        var days = (int)span.TotalDays;
+        var hours = span.Hours;
         var minutes = span.Minutes;
 
-        if (hours == 0)
+        // 24+ hours: show days
+        if (days >= 1)
+        {
+            if (hours == 0)
+                return days == 1 ? "1 day" : $"{days} days";
+            if (days == 1 && hours == 1)
+                return "1 day and 1 hour";
+            if (days == 1)
+                return $"1 day and {hours} hours";
+            if (hours == 1)
+                return $"{days} days and 1 hour";
+            return $"{days} days and {hours} hours";
+        }
+
+        // Less than 24 hours: show hours/minutes
+        var totalHours = (int)span.TotalHours;
+        if (totalHours == 0)
         {
             if (minutes == 0)
                 return "<1 minute";
             return minutes == 1 ? "1 minute" : $"{minutes} minutes";
         }
-        if (hours == 1 && minutes == 0)
+        if (totalHours == 1 && minutes == 0)
             return "1 hour";
-        if (hours == 1)
+        if (totalHours == 1)
             return $"1 hour and {minutes} minute{(minutes == 1 ? "" : "s")}";
         if (minutes == 0)
-            return $"{hours} hours";
-        return $"{hours} hours and {minutes} minute{(minutes == 1 ? "" : "s")}";
+            return $"{totalHours} hours";
+        return $"{totalHours} hours and {minutes} minute{(minutes == 1 ? "" : "s")}";
     }
 
     private void ScrollToCurrentTime(TabPage tab)

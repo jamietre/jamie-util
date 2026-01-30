@@ -6,8 +6,8 @@ namespace WinCalendar;
 public class AppConfig
 {
     private static readonly string ConfigFolder = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "WinCalendar");
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        ".config", "win-calendar");
     private static readonly string ConfigFile = Path.Combine(ConfigFolder, "config.json");
 
     public int FontSizeOffset { get; set; } = 0;
@@ -18,7 +18,7 @@ public class AppConfig
     /// </summary>
     public List<CalendarSourceConfig> CalendarSources { get; set; } = new()
     {
-        new CalendarSourceConfig { Type = "file", Path = "~/.outlook-automation/calendar-data.json" }
+        new CalendarSourceConfig { Type = "file", Path = "~/.config/win-calendar/calendar-data.json" }
     };
 
     private static AppConfig? _instance;
