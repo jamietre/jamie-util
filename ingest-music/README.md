@@ -49,6 +49,12 @@ pnpm cli --artist "Phish" --date 2024-08-16 --venue "Dick's" ~/downloads/show.zi
 # Split tracks to match official setlist
 pnpm cli --split "S2T16 12:22" ~/downloads/phish-1999-12-02.zip
 
+# Download and process from URL
+pnpm cli --url https://example.com/shows/phish-2024-08-16.zip
+
+# Download from URL and process a specific subdirectory
+pnpm cli --url https://example.com/shows/phish-2024-08-16.zip --dir SOUNDBOARD_MIX
+
 # Use a specific config file
 pnpm cli --config ~/my-config.json ~/downloads/show.zip
 ```
@@ -76,11 +82,13 @@ FLAGS
                          Can be specified multiple times for multiple splits
      --merge             Merge sequential tracks (e.g., S1T01 S1T02 S1T03 or 1 2 3)
                          Can be specified multiple times for multiple merges
+     --url               Download archive from URL instead of using local file
+     --dir               Subdirectory within archive to process (e.g., SOUNDBOARD_MIX)
   -h --help              Print help information and exit
   -v --version           Print version information and exit
 
 ARGUMENTS
-  path  Path to archive file or directory of audio files
+  path  Path to archive file or directory of audio files (optional when using --url)
 ```
 
 ### Supported input formats
@@ -109,6 +117,68 @@ The tool recognizes both lossless and lossy audio formats:
 - Lossy formats are **preserved as-is** - no conversion is performed
 - Unknown formats will **fail with an error** listing supported formats
 - All formats must pass validation before processing
+
+### Downloading from URLs
+
+Use `--url` to download archives directly instead of using local files:
+
+```bash
+# Download and process
+pnpm cli --url https://example.com/shows/phish-2024-08-16.zip
+
+# Download and process a specific subdirectory
+pnpm cli --url https://example.com/shows/phish-2024-08-16.zip --dir SOUNDBOARD_MIX
+```
+
+**How it works:**
+- Downloads the file with progress reporting (shows MB downloaded and percentage)
+- Saves to `downloadDir` from config, or OS temp directory if not configured
+- After processing completes, automatically cleans up the download (unless `downloadDir` is set)
+- Supports all archive formats (.zip, .rar, .tar.gz, .gz)
+
+**Download directory behavior:**
+- **With `downloadDir` configured**: Files are downloaded here and **kept after processing** (no cleanup)
+- **Without `downloadDir`**: Files are downloaded to OS temp and **automatically deleted** after processing
+
+**Why keep downloads?**
+If you configure `downloadDir`, downloaded files are preserved in case:
+- You need to re-process the same show with different options
+- The conversion process encounters an error and you want to retry
+- You want to inspect the original archive
+
+**Example config:**
+```json
+{
+  "libraryBasePath": "P:/MusicLibrary/LiveMusic",
+  "downloadDir": "/home/user/music-downloads"
+}
+```
+
+### Selecting a subdirectory within an archive
+
+Some archives contain multiple folders with different recordings (e.g., soundboard vs. audience mixes). Use `--dir` to process a specific subdirectory:
+
+```bash
+# Local archive with subdirectory
+pnpm cli phish-2024-08-16.zip --dir SOUNDBOARD_MIX
+
+# Downloaded archive with subdirectory
+pnpm cli --url https://example.com/show.zip --dir "Audience Mix"
+
+# Works with local directories too
+pnpm cli ~/downloads/show-folder/ --dir matrix
+```
+
+**How it works:**
+- After extracting/preparing the archive, the tool navigates to the specified subdirectory
+- Audio files are only searched within that subdirectory
+- Supplementary files (artwork, notes, etc.) are also copied from that subdirectory
+- If the subdirectory doesn't exist, an error is thrown
+
+**Use cases:**
+- Archives with both "SOUNDBOARD_MIX" and "AUDIENCE_MIX" folders
+- Multi-show archives where you want to process one show at a time
+- Archives with nested directory structures
 
 ### Supplementary files
 
@@ -142,6 +212,7 @@ Then edit with your API keys and library path.
 ```json
 {
   "libraryBasePath": "P:/MusicLibrary/LiveMusic",
+  "downloadDir": "/tmp/music-downloads",
   "setlistSources": {
     "setlist.fm": {
       "apiKey": "your-setlist-fm-api-key"
@@ -187,6 +258,7 @@ Then edit with your API keys and library path.
 | Field | Description |
 |---|---|
 | `libraryBasePath` | Root directory for the organized library output |
+| `downloadDir` | (Optional) Directory for downloaded files when using `--url`. If not specified, uses OS temp directory with automatic cleanup |
 | `setlistSources` | API credentials for each setlist provider |
 | `defaults` | Default settings applied to all bands |
 | `bands` | Per-band overrides, keyed by a unique identifier (not used for matching) |
@@ -598,10 +670,10 @@ pnpm test:watch
 [x] We need to sort numbers correctly when they are part of the original track - if it starts with a #, then parse it after
 [x] similar to our "--split" option, let's add "--merge" to merge tracks like '--merge "D1T01 D1T02 ...". This should error if merging non-sequential tracks
 [x] Phish imports don't handle country correctly, missing from api?
+[x] Allow downloading a show direct from a URL. Provide config for temporary location in case conversion fails. This can be a top-level config - we don't need this per band
 [ ] We should be able to handle incomplete shows (e.g. one set) - as long as there are fewer tracks and we match them all by name
 [ ] When we enter a previously unknown band, add config for it
 [ ] Preprocss an archive by extracting any text or markdown files and try to identify the artist with using regex pattern matching. If multiple matches occur, ask
 [ ] Add a --debug options; emit curl statement for API calls
-[ ] Allow downloading a show direct from a URL. Provide config for temporary location in case conversion fails.
 [ ] Add code using our callbacl/plugin pattern to parse artist & date from filenames
 [ ] Allow choosing an image; resize to 400x400 and save as "cover.jpg"

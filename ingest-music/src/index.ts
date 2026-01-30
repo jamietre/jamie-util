@@ -16,6 +16,8 @@ interface IngestFlags {
   "skip-conversion": boolean;
   split?: string[];
   merge?: string[];
+  url?: string;
+  dir?: string;
 }
 
 const ingestCommand = buildCommand({
@@ -28,9 +30,10 @@ const ingestCommand = buildCommand({
       kind: "tuple",
       parameters: [
         {
-          brief: "Path to archive or directory",
+          brief: "Path to archive or directory (optional when using --url)",
           parse: String,
           placeholder: "path",
+          optional: true,
         },
       ],
     },
@@ -106,23 +109,43 @@ const ingestCommand = buildCommand({
         variadic: true,
         optional: true,
       },
+      url: {
+        kind: "parsed",
+        brief: "Download archive from URL instead of using local file",
+        parse: String,
+        optional: true,
+      },
+      dir: {
+        kind: "parsed",
+        brief: "Subdirectory within archive to process (e.g., SOUNDBOARD_MIX)",
+        parse: String,
+        optional: true,
+      },
     },
   },
   async func(
     this: CommandContext,
     flags: IngestFlags,
-    inputPath: string
+    inputPath?: string
   ): Promise<void> {
     console.log("Ingest Music");
     console.log("============");
-    console.log(`Input: ${inputPath}`);
+
+    // Validate that either inputPath or --url is provided
+    if (!inputPath && !flags.url) {
+      console.error("ERROR: Must provide either a path argument or --url flag");
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(`Input: ${flags.url ? flags.url : inputPath}`);
     console.log(
       `Mode:  ${flags["dry-run"] ? "DRY RUN" : flags.batch ? "BATCH" : "SINGLE"}`
     );
     console.log();
 
     try {
-      const results = await ingestMusic(inputPath, flags);
+      const results = await ingestMusic(inputPath ?? ".", flags);
 
       console.log();
       console.log("Results");

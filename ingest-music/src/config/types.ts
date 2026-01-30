@@ -45,6 +45,7 @@ export interface BandConfig {
 /** Top-level config file schema */
 export interface Config {
   libraryBasePath: string;
+  downloadDir?: string; // Optional directory for downloaded files (defaults to OS temp)
   setlistSources: Record<string, SetlistSourceConfig>;
   defaults: BandConfig;
   bands: Record<string, Partial<BandConfig>>;
@@ -107,6 +108,8 @@ export interface CliFlags {
   "skip-conversion": boolean;
   split?: string[]; // Track split specifications (e.g., "S2T17 12:22:00")
   merge?: string[]; // Track merge specifications (e.g., "S1T01 S1T02 S1T03")
+  url?: string; // Download from URL instead of using local file
+  dir?: string; // Subdirectory within archive to process
 }
 
 /** Parsed track split specification */

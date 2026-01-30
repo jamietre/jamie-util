@@ -14,7 +14,7 @@ export function generateLogContent(
   matched: MatchedTrack[],
   bandConfig: BandConfig,
   sourceArchive: string,
-  nonAudioFiles: string[]
+  nonAudioFiles: Array<{ fullPath: string; relativePath: string }>
 ): string {
   const lines: string[] = [];
 
@@ -100,7 +100,7 @@ export function generateLogContent(
     lines.push("## Supplementary Files");
     lines.push("");
     for (const f of nonAudioFiles) {
-      lines.push(`- ${path.basename(f)}`);
+      lines.push(`- ${f.relativePath}`);
     }
     lines.push("");
   }

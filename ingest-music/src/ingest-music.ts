@@ -17,6 +17,7 @@ import type {
 import { loadConfig, resolveBandConfig } from "./config/config.js";
 import { parseZipFilename } from "./matching/parse-filename.js";
 import { extractArchive, listAudioFiles, listNonAudioFiles, cleanupTempDir, isArchive } from "./utils/extract.js";
+import { downloadToTemp } from "./utils/download.js";
 import { verifyRequiredTools } from "./utils/startup.js";
 import { analyzeAllAudio, convertAllIfNeeded } from "./audio/audio.js";
 import { applySplitsToFiles, parseSplitSpec, applyMergesToFiles, parseMergeSpec } from "./audio/split.js";
@@ -112,10 +113,34 @@ export async function ingestMusic(
     config.libraryBasePath = flags.library;
   }
 
-  if (flags.batch) {
-    return processBatch(zipPath, flags, config, onProgress);
+  // Handle URL download if --url flag is provided
+  let actualPath = zipPath;
+  let downloadCleanup: { path: string; shouldCleanup: boolean } | null = null;
+
+  if (flags.url) {
+    if (flags.batch) {
+      throw new Error("Cannot use --url with --batch mode");
+    }
+
+    onProgress("Downloading from URL...");
+    downloadCleanup = await downloadToTemp(flags.url, config.downloadDir, onProgress);
+    actualPath = downloadCleanup.path;
+    onProgress("");
   }
-  return [await processSingleArchive(zipPath, flags, config, onProgress)];
+
+  try {
+    if (flags.batch) {
+      return await processBatch(actualPath, flags, config, onProgress);
+    }
+    return [await processSingleArchive(actualPath, flags, config, onProgress)];
+  } finally {
+    // Clean up downloaded file if needed
+    if (downloadCleanup?.shouldCleanup) {
+      onProgress("\nCleaning up downloaded file...");
+      const downloadDir = path.dirname(downloadCleanup.path);
+      await cleanupTempDir(downloadDir);
+    }
+  }
 }
 
 async function processBatch(
@@ -271,6 +296,27 @@ async function processSingleArchive(
   // Step 5: Prepare working directory (extract archive or use directory)
   onProgress("\nPreparing working directory...");
   const workingDir = await extractArchive(zipPath, onProgress);
+  // Keep track of original source directory for non-audio files
+  let sourceDir = workingDir.path;
+
+  // Step 5b: If --dir is specified, navigate to subdirectory
+  if (flags.dir) {
+    const subdir = path.join(workingDir.path, flags.dir);
+    try {
+      const stats = await fs.stat(subdir);
+      if (!stats.isDirectory()) {
+        throw new Error(`--dir "${flags.dir}" exists but is not a directory`);
+      }
+      onProgress(`Using subdirectory: ${flags.dir}`);
+      workingDir.path = subdir;
+      sourceDir = subdir;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error(`Subdirectory "${flags.dir}" not found in archive`);
+      }
+      throw error;
+    }
+  }
 
   try {
     // Step 4: List audio files
@@ -417,7 +463,7 @@ async function processSingleArchive(
 
     if (flags["dry-run"]) {
       onProgress("\n--- DRY RUN ---");
-      const nonAudioFiles = await listNonAudioFiles(workingDir.path, bandConfig.excludePatterns ?? []);
+      const nonAudioFiles = await listNonAudioFiles(sourceDir, bandConfig.excludePatterns ?? []);
       printTagsSummary(matched, showInfo, bandConfig, onProgress);
       printDryRun(matched, showInfo, bandConfig, targetDir, nonAudioFiles, onProgress);
       return {
@@ -467,7 +513,7 @@ async function processSingleArchive(
     await copyToLibrary(matched, showInfo, bandConfig, targetDir, onProgress);
 
     // Step 11b: Copy non-audio files (artwork, info.txt, etc.)
-    const nonAudioFiles = await listNonAudioFiles(workingDir.path, bandConfig.excludePatterns ?? []);
+    const nonAudioFiles = await listNonAudioFiles(sourceDir, bandConfig.excludePatterns ?? []);
     if (nonAudioFiles.length > 0) {
       onProgress(`\nCopying ${nonAudioFiles.length} supplementary file(s)...`);
       await copyNonAudioFiles(nonAudioFiles, targetDir, onProgress);
