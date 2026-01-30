@@ -26,7 +26,7 @@ sudo jmtpfs -o allow_other /media/android/
 
 unmount
 ```sh
-sudo fusermount -u /media/android7
+sudo fusermount -u /media/android
 ```
 
 Powershell:

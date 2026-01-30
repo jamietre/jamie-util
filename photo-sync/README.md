@@ -56,3 +56,11 @@ pnpm test
 # Run tests in watch mode
 pnpm test:watch
 ```
+
+
+## TODO
+
+- Store a database of paths/hashes as well as deleted files to reference when syncing. Goal is to be able to rename/move files in my local archive without making copies without breaking sync
+  - all files should be in the database
+  - files not found in local archive should be flagged as deleted and ignored during syncs
+  - files found moved locally, should have the db updated with new path to speed identification next time
