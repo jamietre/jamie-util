@@ -21,7 +21,7 @@ public class DoubleBufferedForm : Form
 
 public class TrayApplicationContext : ApplicationContext
 {
-    private const string Version = "1.1.0";
+    private const string Version = "1.1.1";
 
     private readonly NotifyIcon _trayIcon;
     private readonly System.Windows.Forms.Timer _timer;
@@ -29,10 +29,15 @@ public class TrayApplicationContext : ApplicationContext
     private readonly ContextMenuStrip _contextMenu;
     private readonly ToolStripMenuItem _statusMenuItem;
     private Form? _meetingsForm;
+    private readonly Dictionary<string, bool> _initialCalendarSourceStates;
 
     public TrayApplicationContext()
     {
         _reminderService = new ReminderService();
+
+        // Capture initial calendar source states
+        _initialCalendarSourceStates = AppConfig.Instance.CalendarSources
+            .ToDictionary(s => s.DisplayName, s => s.Enabled);
 
         // Create context menu
         _contextMenu = new ContextMenuStrip();
@@ -211,6 +216,19 @@ public class TrayApplicationContext : ApplicationContext
             KeyPreview = true
         };
 
+        // Restart required message label (initially hidden)
+        var restartLabel = new Label
+        {
+            Text = "Restart required to update calendar feed",
+            BackColor = Color.FromArgb(255, 220, 220),
+            ForeColor = Color.DarkRed,
+            Font = new Font(SystemFonts.DefaultFont.FontFamily, 10, FontStyle.Bold),
+            TextAlign = ContentAlignment.MiddleCenter,
+            Dock = DockStyle.Bottom,
+            Height = 30,
+            Visible = HasCalendarSourcesChanged()
+        };
+
         // Track the form and clear reference when closed
         _meetingsForm = form;
         form.FormClosed += (s, e) => _meetingsForm = null;
@@ -235,7 +253,7 @@ public class TrayApplicationContext : ApplicationContext
                 {
                     cfg.Enabled = item.Checked;
                     config.Save();
-                    ShowRestartRequiredDialog();
+                    restartLabel.Visible = HasCalendarSourcesChanged();
                 }
             };
             sourcesMenu.DropDownItems.Add(sourceItem);
@@ -295,8 +313,9 @@ public class TrayApplicationContext : ApplicationContext
         tabControl.TabPages.Add(todayTab);
         tabControl.TabPages.Add(nextBusinessDayTab);
 
-        // Add TabControl first, then MenuStrip (WinForms docks in reverse order)
+        // Add controls in docking order: TabControl, RestartLabel, MenuStrip (WinForms docks in reverse order)
         form.Controls.Add(tabControl);
+        form.Controls.Add(restartLabel);
         form.Controls.Add(menuStrip);
 
         void RebuildTabs()
@@ -981,14 +1000,21 @@ public class TrayApplicationContext : ApplicationContext
         return daysAhead == 1 ? "Tomorrow" : next.DayOfWeek.ToString();
     }
 
-    private static void ShowRestartRequiredDialog()
+    private bool HasCalendarSourcesChanged()
     {
-        MessageBox.Show(
-            "Calendar source changes will take effect after restarting the application.\n\n" +
-            "Use Options > Restart Application to restart now.",
-            "Restart Required",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Information);
+        var currentSources = AppConfig.Instance.CalendarSources;
+
+        // Check if any source's enabled state has changed
+        foreach (var source in currentSources)
+        {
+            if (_initialCalendarSourceStates.TryGetValue(source.DisplayName, out var initialEnabled))
+            {
+                if (source.Enabled != initialEnabled)
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     private void Restart()
