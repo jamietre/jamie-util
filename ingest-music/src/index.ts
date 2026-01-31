@@ -2,6 +2,7 @@
 import { buildApplication, buildCommand, run } from "@stricli/core";
 import type { CommandContext } from "@stricli/core";
 import { ingestMusic } from "./ingest-music.js";
+import { logger } from "./utils/logger.js";
 
 interface IngestFlags {
   config?: string;
@@ -14,6 +15,9 @@ interface IngestFlags {
   batch: boolean;
   "dry-run": boolean;
   "skip-conversion": boolean;
+  "use-llm": boolean;
+  "use-web": boolean;
+  debug: boolean;
   split?: string[];
   merge?: string[];
   url?: string;
@@ -95,6 +99,21 @@ const ingestCommand = buildCommand({
         brief: "Skip audio format conversion",
         default: false,
       },
+      "use-llm": {
+        kind: "boolean",
+        brief: "Enable LLM for show identification (overrides config)",
+        default: false,
+      },
+      "use-web": {
+        kind: "boolean",
+        brief: "Enable web search for show identification (overrides config)",
+        default: false,
+      },
+      debug: {
+        kind: "boolean",
+        brief: "Enable debug logging (shows API calls as curl commands)",
+        default: false,
+      },
       split: {
         kind: "parsed",
         brief: "Split track at timestamp (format: S2T17 12:22 or 2-17 12:22:00). Can be specified multiple times.",
@@ -128,6 +147,9 @@ const ingestCommand = buildCommand({
     flags: IngestFlags,
     inputPath?: string
   ): Promise<void> {
+    // Initialize logger with debug mode
+    logger.setDebug(flags.debug);
+
     console.log("Ingest Music");
     console.log("============");
 

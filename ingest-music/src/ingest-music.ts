@@ -16,13 +16,19 @@ import type {
 } from "./config/types.js";
 import { loadConfig, resolveBandConfig } from "./config/config.js";
 import { parseZipFilename } from "./matching/parse-filename.js";
-import { extractArchive, listAudioFiles, listNonAudioFiles, cleanupTempDir, isArchive } from "./utils/extract.js";
+import { parseLocation } from "./matching/location-parser.js";
+import { extractArchive, listAudioFiles, listNonAudioFiles, cleanupTempDir, isArchive, readTextFiles } from "./utils/extract.js";
+import { createLLMService } from "./llm/index.js";
+import { createWebSearchService } from "./websearch/index.js";
+import { ShowIdentificationOrchestrator, FilenameStrategy, AudioFileListStrategy, presentIdentificationResults } from "./identification/index.js";
+import { searchSetlistsByCity, searchSetlistsByVenue, type SetlistSearchResult } from "./setlist/search.js";
+import { promptUserToSelectShow } from "./setlist/disambiguation.js";
 import { downloadToTemp } from "./utils/download.js";
 import { verifyRequiredTools } from "./utils/startup.js";
 import { analyzeAllAudio, convertAllIfNeeded } from "./audio/audio.js";
 import { applySplitsToFiles, parseSplitSpec, applyMergesToFiles, parseMergeSpec } from "./audio/split.js";
 import { fetchSetlist } from "./setlist/setlist.js";
-import { matchTracks } from "./matching/match.js";
+import { matchTracks, TrackCountMismatchError } from "./matching/match.js";
 import { tagAllTracks, buildTemplateVars } from "./output/tagger.js";
 import { renderTemplate, zeroPad, sanitize, sanitizeFilename } from "./output/template.js";
 import { generateLogContent, writeLogFile } from "./output/log.js";
@@ -244,19 +250,72 @@ async function processSingleArchive(
     showInfo.artist = bandConfig.name;
   }
 
-  // Step 3: Determine show date early (before processing files)
+  // Step 3: Determine show information using identification system
   // We need date + artist to fetch setlist
-  if (showInfo.date === "Unknown" || showInfo.date === "") {
-    onProgress("\nShow date not determined from filename/path");
+  if (showInfo.date === "Unknown" || showInfo.date === "" || !showInfo.venue) {
+    onProgress("\nRunning show identification strategies...");
 
-    if (!flags.batch && !flags["dry-run"]) {
-      // Interactive mode - prompt user
-      showInfo.date = await promptForDate();
-      onProgress(`Using date: ${showInfo.date}`);
+    // CLI flags override config.enabled settings
+    const shouldUseLlm = flags["use-llm"] || (config.llm?.enabled ?? false);
+    const shouldUseWeb = flags["use-web"] || (config.webSearch?.enabled ?? false);
+
+    // Create services if enabled
+    const llmService = shouldUseLlm && config.llm ? createLLMService(config.llm) ?? undefined : undefined;
+    const webSearchService = shouldUseWeb && config.webSearch ? createWebSearchService(config.webSearch) : undefined;
+
+    // Create orchestrator and register strategies
+    const orchestrator = new ShowIdentificationOrchestrator();
+    orchestrator.registerStrategy(new FilenameStrategy());
+    orchestrator.registerStrategy(new AudioFileListStrategy());
+    // TODO: Add TextFileStrategy, WebSearchFilenameStrategy, WebSearchLLMStrategy
+
+    // Run identification
+    const identificationResults = await orchestrator.identifyShow(
+      zipPath,
+      config,
+      llmService,
+      webSearchService
+    );
+
+    if (identificationResults.length > 0) {
+      // Present results to user (or auto-select if high confidence)
+      let selectedInfo: Partial<ShowInfo> | undefined;
+
+      if (flags.batch || flags["dry-run"]) {
+        // Batch/dry-run: auto-select highest confidence
+        selectedInfo = identificationResults[0].showInfo;
+        onProgress(`Auto-selected (${identificationResults[0].confidence}% confidence): ${identificationResults[0].source}`);
+      } else {
+        // Interactive: present options
+        selectedInfo = await presentIdentificationResults(identificationResults, zipPath);
+      }
+
+      // Apply selected info
+      if (selectedInfo) {
+        if (selectedInfo.artist) showInfo.artist = selectedInfo.artist;
+        if (selectedInfo.date) showInfo.date = selectedInfo.date;
+        if (selectedInfo.venue) showInfo.venue = selectedInfo.venue;
+        if (selectedInfo.city) showInfo.city = selectedInfo.city;
+        if (selectedInfo.state) showInfo.state = selectedInfo.state;
+        if (selectedInfo.country) showInfo.country = selectedInfo.country;
+
+        onProgress(`Using identified show: ${showInfo.artist} - ${showInfo.date}`);
+      }
     } else {
-      throw new Error(
-        "Show date could not be determined. Please specify with --date flag or include date in filename."
-      );
+      onProgress("No identification strategies found a match.");
+    }
+
+    // If still unknown, fall back to manual prompt or error
+    if (showInfo.date === "Unknown" || showInfo.date === "") {
+      if (!flags.batch && !flags["dry-run"]) {
+        // Interactive mode - prompt user
+        showInfo.date = await promptForDate();
+        onProgress(`Using date: ${showInfo.date}`);
+      } else {
+        throw new Error(
+          "Show date could not be determined. Please specify with --date flag or include date in filename."
+        );
+      }
     }
   }
 
@@ -400,11 +459,112 @@ async function processSingleArchive(
 
     // Step 9: Match tracks to setlist
     onProgress("\nMatching tracks to setlist...");
-    const matched = matchTracks(
-      audioInfos,
-      setlist.songs,
-      bandConfig.encoreInSet2
-    );
+    let matched: MatchedTrack[];
+
+    try {
+      matched = matchTracks(audioInfos, setlist.songs, bandConfig.encoreInSet2);
+    } catch (error) {
+      // Handle track count mismatch with LLM assistance
+      const shouldUseLlm = flags["use-llm"] || (config.llm?.enabled ?? false);
+      if (error instanceof TrackCountMismatchError && shouldUseLlm && config.llm) {
+        onProgress("\nTrack count mismatch detected!");
+        onProgress(`Audio files: ${error.audioFiles.length}, Setlist songs: ${error.songs.length}`);
+        onProgress("\nUsing LLM to analyze mismatch...");
+
+        const llmService = createLLMService(config.llm);
+        if (llmService) {
+          const suggestion = await llmService.resolveSetlistMismatch({
+            audioFiles: error.audioFiles.map((f) => path.basename(f.filePath)),
+            setlist: error.songs.map((s) => ({
+              title: s.title,
+              set: s.set,
+              position: s.position,
+            })),
+            fileCount: error.audioFiles.length,
+            setlistCount: error.songs.length,
+          });
+
+          if (suggestion.confidence > 0.5) {
+            onProgress("\n" + "=".repeat(60));
+            onProgress("LLM Analysis:");
+            onProgress("=".repeat(60));
+            onProgress(suggestion.reasoning);
+            onProgress(`Confidence: ${(suggestion.confidence * 100).toFixed(0)}%`);
+            onProgress("=".repeat(60));
+
+            // Check for split suggestions - we can't handle these automatically
+            if (suggestion.splits && suggestion.splits.length > 0) {
+              onProgress("\n❌ LLM suggested track splits, but timestamps cannot be determined automatically.");
+              onProgress("Track splitting requires manual intervention with --split flag.");
+              throw error; // Can't proceed
+            }
+
+            // Handle merge suggestions
+            if (suggestion.merges && suggestion.merges.length > 0) {
+              onProgress(`\n✓ LLM suggests merging ${suggestion.merges.length} track group(s):`);
+              for (const merge of suggestion.merges) {
+                const trackNums = merge.tracks.map(t => `Track ${t}`).join(" + ");
+                onProgress(`  - ${trackNums}`);
+              }
+
+              // Prompt user to confirm
+              if (!flags.batch && !flags["dry-run"]) {
+                const confirmed = await confirmLLMSuggestion("\nApply these merges and retry matching?");
+
+                if (!confirmed) {
+                  onProgress("Merge suggestions rejected.");
+                  throw error;
+                }
+              } else {
+                onProgress("\n✓ Auto-applying merges in batch/dry-run mode...");
+              }
+
+              // Apply merges to audio files
+              onProgress("\nApplying merges...");
+              try {
+                // Convert LLM suggestions to TrackMerge format
+                const mergeSpecs = suggestion.merges.map(m => ({
+                  tracks: m.tracks.map(trackNum => ({
+                    set: 1, // Assume all in set 1 (LLM doesn't know about sets)
+                    track: trackNum
+                  }))
+                }));
+
+                // Extract file paths from AudioInfo
+                const filePaths = audioInfos.map(a => a.filePath);
+
+                // Apply merges and get new file paths
+                const mergedFilePaths = await applyMergesToFiles(filePaths, mergeSpecs, onProgress);
+
+                // Re-analyze audio files to get new AudioInfo array
+                audioInfos = await analyzeAllAudio(mergedFilePaths, onProgress);
+
+                // Retry matching with merged files
+                onProgress("\nRetrying track matching with merged files...");
+                matched = matchTracks(audioInfos, setlist.songs, bandConfig.encoreInSet2);
+                onProgress("✓ Matching successful after applying merges!");
+
+              } catch (mergeError) {
+                onProgress(`\n❌ Failed to apply merges: ${mergeError instanceof Error ? mergeError.message : String(mergeError)}`);
+                throw error; // Re-throw original error
+              }
+            } else {
+              onProgress("\n❌ LLM did not suggest any actionable operations.");
+              throw error;
+            }
+          } else {
+            onProgress(`\n❌ LLM could not suggest operations (confidence: ${(suggestion.confidence * 100).toFixed(0)}%)`);
+            throw error;
+          }
+        } else {
+          throw error; // LLM service creation failed
+        }
+      } else {
+        // Either not a mismatch error, or LLM not enabled
+        throw error;
+      }
+    }
+
     printMatchPreview(matched, onProgress);
 
     // Compute library path (sanitize values to avoid path issues - slashes → dashes)
@@ -677,6 +837,19 @@ async function confirmContinue(): Promise<boolean> {
     const answer = await rl.question(
       "\nProceed with tagging and copying? [y/N] "
     );
+    return answer.trim().toLowerCase() === "y";
+  } finally {
+    rl.close();
+  }
+}
+
+/**
+ * Confirm an LLM suggestion with the user.
+ */
+async function confirmLLMSuggestion(question: string): Promise<boolean> {
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+  try {
+    const answer = await rl.question(`\n${question} [y/N] `);
     return answer.trim().toLowerCase() === "y";
   } finally {
     rl.close();

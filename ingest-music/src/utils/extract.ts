@@ -328,3 +328,41 @@ export async function listNonAudioFiles(
 export async function cleanupTempDir(dir: string): Promise<void> {
   await fs.rm(dir, { recursive: true, force: true });
 }
+
+/**
+ * Read text files from a directory (for LLM context).
+ * Looks for common text file extensions: .txt, .md, .nfo, .info
+ * Returns a map of filename -> content.
+ * Limits file size to 10KB to avoid reading large files.
+ */
+export async function readTextFiles(dir: string): Promise<Record<string, string>> {
+  const textExtensions = new Set([".txt", ".md", ".nfo", ".info"]);
+  const maxFileSize = 10 * 1024; // 10KB
+  const results: Record<string, string> = {};
+
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (textExtensions.has(ext)) {
+          const filePath = path.join(dir, entry.name);
+          try {
+            const stats = await fs.stat(filePath);
+            if (stats.size <= maxFileSize) {
+              const content = await fs.readFile(filePath, "utf-8");
+              results[entry.name] = content;
+            }
+          } catch {
+            // Skip files that can't be read
+          }
+        }
+      }
+    }
+  } catch {
+    // If directory can't be read, return empty results
+  }
+
+  return results;
+}

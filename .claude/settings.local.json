@@ -28,7 +28,14 @@
       "Bash(npx tsc:*)",
       "Bash(metaflac:*)",
       "Bash(ffprobe:*)",
-      "Bash(dotnet build:*)"
+      "Bash(dotnet build:*)",
+      "Bash(nvidia-smi:*)",
+      "Bash(lspci:*)",
+      "Bash(sh)",
+      "Bash(ollama:*)",
+      "Bash(systemctl status:*)",
+      "Bash(xargs -I {} sh -c 'echo \"\"{}\"\"; head -3 \"\"{}\"\"')",
+      "Bash(find:*)"
     ]
   }
 }

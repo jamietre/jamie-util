@@ -14,6 +14,21 @@
       "url": "https://kglw.net/api/v2"
     }
   },
+  "llm": {
+    "enabled": false,
+    "provider": "ollama",
+    "model": "qwen2.5:7b",
+    "apiEndpoint": "http://127.0.0.1:11434",
+    "maxTokens": 4000,
+    "autoApply": false,
+    "maxTokensPerRun": 50000
+  },
+  "webSearch": {
+    "enabled": false,
+    "provider": "brave",
+    "apiKey": "your-brave-search-api-key",
+    "maxResults": 10
+  },
   "defaults": {
     "setlistSources": ["setlist.fm"],
     "albumTemplate": "{date} - {venue}, {location}",

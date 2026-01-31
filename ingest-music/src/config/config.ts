@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import type { Config, BandConfig } from "./types.js";
+import { logger } from "../utils/logger.js";
 
 const DEFAULT_CONFIG: Config = {
   libraryBasePath: "",
@@ -56,7 +57,7 @@ export async function loadConfig(explicitPath?: string): Promise<Config> {
     try {
       const content = await fs.readFile(candidate, "utf-8");
       const parsed = JSON.parse(content) as Partial<Config>;
-      console.log(`Found config at ${candidate}`);
+      logger.info(`Found config at ${candidate}`);
       return mergeConfig(DEFAULT_CONFIG, parsed);
     } catch {
       // File not found or invalid — try next
@@ -77,10 +78,13 @@ export function mergeConfig(
 ): Config {
   return {
     libraryBasePath: override.libraryBasePath ?? defaults.libraryBasePath,
+    downloadDir: override.downloadDir ?? defaults.downloadDir,
     setlistSources: {
       ...defaults.setlistSources,
       ...override.setlistSources,
     },
+    llm: override.llm ?? defaults.llm,
+    webSearch: override.webSearch ?? defaults.webSearch,
     defaults: {
       ...defaults.defaults,
       ...override.defaults,

@@ -1,0 +1,310 @@
+# Code Organization and Style Principles
+
+## Core Design Principles
+
+### 1. Single Responsibility Principle
+Each module, file, and function should have one clear purpose. Avoid mixing concerns.
+
+**Examples:**
+- ✅ `src/setlist/search.ts` - Pure search functions only
+- ✅ `src/setlist/disambiguation.ts` - User interaction only
+- ❌ Mixing API calls and user prompts in the same function
+
+### 2. Decoupling and Modularity
+Minimize dependencies between modules. Use interfaces and provider patterns for swappable implementations.
+
+**Examples:**
+- ✅ `LLMProvider` interface with multiple implementations (Ollama, Anthropic, OpenAI)
+- ✅ Pure functions that don't depend on global state
+- ❌ Tight coupling between unrelated modules
+- ❌ Hard-coded dependencies on specific implementations
+
+### 3. Testability
+Design code for easy unit testing without complex mocks. Prefer pure functions over side effects.
+
+**Examples:**
+- ✅ `parseLocation(filename: string): LocationInfo` - Pure function, easy to test
+- ✅ Separating business logic from I/O operations
+- ❌ Functions that require mocking CLI input/output
+- ❌ Mixing file I/O with business logic
+
+### 4. Provider Pattern
+Use interfaces for swappable implementations, especially for external services.
+
+**Pattern:**
+```typescript
+// Define interface
+export interface LLMProvider {
+  query<T>(prompt: string): Promise<T>;
+}
+
+// Multiple implementations
+export class OllamaProvider implements LLMProvider { ... }
+export class AnthropicProvider implements LLMProvider { ... }
+
+// Factory function
+export function createProvider(config: LLMConfig): LLMProvider { ... }
+```
+
+### 5. Separation of Concerns
+
+#### Business Logic vs UI
+Never mix business logic with user interaction. Keep them in separate modules.
+
+**Examples:**
+- ✅ `search.ts` (logic) + `disambiguation.ts` (UI)
+- ❌ API calls embedded in readline prompts
+
+#### Pure Functions vs Side Effects
+Prefer pure functions for core logic. Isolate side effects (I/O, API calls) in dedicated modules.
+
+**Examples:**
+- ✅ `convertSetlistFMDate(date: string): string` - Pure transformation
+- ✅ `fetchSetlist()` in dedicated module - Side effect isolated
+- ❌ Functions that both calculate and write files
+
+## File Size Guidelines
+
+- **Target:** Keep files under 300 lines
+- **Warning zone:** 300-500 lines - consider splitting
+- **Refactor needed:** >500 lines - definitely split into modules
+
+**Current files needing attention:**
+- `src/ingest-music.ts` (899 lines) - Extract UI prompts, workflow orchestration
+- `src/setlist/setlist.ts` (419 lines) - Split into provider modules
+
+## Directory Structure
+
+```
+src/
+├── audio/           # Audio processing (well-modularized) ✅
+├── config/          # Configuration (well-modularized) ✅
+├── llm/             # LLM integration (well-modularized) ✅
+│   ├── providers/   # Provider implementations
+│   ├── types.ts     # Shared types
+│   └── service.ts   # High-level service
+├── matching/        # Track matching logic
+├── output/          # Tagging and templating ✅
+├── setlist/         # Setlist fetching
+│   ├── providers/   # TODO: Split by provider (setlistfm, phishnet, kglw)
+│   ├── search.ts    # Pure search functions ✅
+│   └── disambiguation.ts  # User interaction ✅
+├── ui/              # TODO: Extract user interaction code
+├── utils/           # Utilities ✅
+├── index.ts         # CLI entry point ✅
+└── ingest-music.ts  # Main orchestrator (needs refactoring) ⚠️
+```
+
+## Anti-Patterns to Avoid
+
+### ❌ Large Monolithic Files
+Don't create files that do "everything". Split by responsibility.
+
+### ❌ Mixing Business Logic with UI
+```typescript
+// BAD
+async function searchAndPrompt() {
+  const results = await api.search(); // Business logic
+  const answer = await readline.question(); // UI
+  return results[answer];
+}
+
+// GOOD
+async function search() { return await api.search(); }
+async function promptUser(results) { return await readline.question(); }
+```
+
+### ❌ Hard-to-Test Code
+```typescript
+// BAD
+async function processFile() {
+  const file = await fs.readFile(...);
+  const data = transform(file); // Can't test transform without file I/O
+  await fs.writeFile(...);
+}
+
+// GOOD
+function transform(data: string): string { ... } // Pure, testable
+async function processFile() {
+  const file = await fs.readFile(...);
+  const data = transform(file);
+  await fs.writeFile(...);
+}
+```
+
+### ❌ Tight Coupling
+```typescript
+// BAD
+import { ollamaQuery } from './ollama';
+const result = ollamaQuery(prompt); // Coupled to Ollama
+
+// GOOD
+import type { LLMProvider } from './types';
+const result = provider.query(prompt); // Works with any provider
+```
+
+### ❌ Over-Engineering
+Don't add features, abstractions, or error handling beyond what's needed:
+- Only add error handling for scenarios that can actually happen
+- Don't create utilities for one-time operations
+- Don't design for hypothetical future requirements
+- Three similar lines is better than a premature abstraction
+
+## Naming Conventions
+
+### Files
+- Use kebab-case: `location-parser.ts`, `setlist-search.ts`
+- Name after primary export/purpose
+- Group related files in directories
+
+### Functions
+- Use camelCase: `parseLocation`, `searchSetlistsByCity`
+- Be descriptive: prefer `extractDateFromMetadata` over `getDate`
+- Pure functions: verb + noun (e.g., `convertSetlistFMDate`)
+- Side effects: verb indicating action (e.g., `fetchSetlist`, `writeLogFile`)
+
+### Types/Interfaces
+- Use PascalCase: `SetlistSearchResult`, `LLMProvider`
+- Interfaces: descriptive nouns (e.g., `LocationInfo`, `AudioInfo`)
+- Provider interfaces: end with `Provider` (e.g., `LLMProvider`)
+
+## Code Style
+
+### Imports
+Group and order imports:
+1. Node.js built-ins
+2. External packages
+3. Internal types (with `type` keyword)
+4. Internal modules
+
+```typescript
+import * as path from "node:path";
+import * as fs from "node:fs/promises";
+
+import { somePackage } from "external-package";
+
+import type { Config, ShowInfo } from "./config/types.js";
+import { loadConfig } from "./config/config.js";
+import { parseLocation } from "./matching/location-parser.js";
+```
+
+### Functions
+- Prefer explicit return types for public APIs
+- Use JSDoc for public functions
+- Keep functions focused and short (< 50 lines ideal)
+
+```typescript
+/**
+ * Search setlist.fm for shows by artist and city.
+ *
+ * @param artistName Artist name to search for
+ * @param cityName City name to search for
+ * @param sourceConfig setlist.fm API configuration
+ * @returns Array of matching shows, sorted by date (newest first)
+ */
+export async function searchSetlistsByCity(
+  artistName: string,
+  cityName: string,
+  sourceConfig: SetlistSourceConfig
+): Promise<SetlistSearchResult[]> {
+  // Implementation
+}
+```
+
+### Error Handling
+- Use typed errors for expected failure cases
+- Only catch errors you can handle
+- Let unexpected errors propagate
+- Don't catch and re-throw without adding value
+
+```typescript
+// GOOD - Typed error for expected case
+export class TrackCountMismatchError extends Error {
+  constructor(
+    message: string,
+    public expected: number,
+    public actual: number
+  ) {
+    super(message);
+  }
+}
+
+// GOOD - Let it fail for unexpected cases
+const data = await response.json(); // Don't wrap in try/catch
+
+// BAD - Catching and re-throwing
+try {
+  await doSomething();
+} catch (error) {
+  throw error; // Adds no value
+}
+```
+
+## TypeScript Guidelines
+
+### Strict Mode
+Always use strict TypeScript settings:
+- No implicit any
+- Strict null checks
+- Always provide type annotations for exported APIs
+
+### Type Imports
+Use `type` keyword for type-only imports:
+```typescript
+import type { SetlistSearchResult } from "./setlist/search.js";
+```
+
+### Avoid `any`
+- Never use `any` - use `unknown` if type is truly unknown
+- Always provide explicit types for function parameters
+- Let TypeScript infer return types for simple functions
+- Explicitly type return values for public APIs
+
+## Package Management
+
+- Use **pnpm** for all package operations
+- Never use npm or yarn
+- Add dependencies: `pnpm add <package>`
+- Add dev dependencies: `pnpm add -D <package>`
+
+## Testing Philosophy
+
+When writing testable code:
+1. Extract pure functions that transform data
+2. Separate I/O from business logic
+3. Use dependency injection for external services
+4. Avoid mocking when possible - prefer real implementations with test data
+
+## Refactoring Triggers
+
+Refactor when you see:
+- File exceeds 300 lines
+- Function exceeds 50 lines
+- Mixing business logic with I/O
+- Copy-pasted code (3+ occurrences)
+- Hard to write unit test
+- Tight coupling between modules
+
+## Documentation
+
+- Add JSDoc to all exported functions
+- Document why, not what (code should be self-documenting)
+- Keep comments updated with code changes
+- Document architectural decisions in TODO.md or dedicated ADRs
+- No need for comments on obvious code
+
+## Performance Considerations
+
+- Avoid premature optimization
+- Profile before optimizing
+- Consider caching for expensive external API calls
+- Use streaming for large files when possible
+- Parallelize independent operations
+
+## Security
+
+- Validate input at system boundaries (user input, external APIs)
+- Never commit secrets or API keys
+- Use environment variables or config files for sensitive data
+- Be careful with shell command injection
+- Sanitize user input before using in file paths or commands

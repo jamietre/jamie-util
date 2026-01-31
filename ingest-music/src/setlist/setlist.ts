@@ -6,6 +6,7 @@ import type {
   Config,
   SetlistSourceConfig,
 } from "../config/types.js";
+import { logger } from "../utils/logger.js";
 
 /**
  * Fetch a setlist by trying each configured source in order.
@@ -60,6 +61,7 @@ async function fetchPhishNet(
 
   // Step 1: Get show metadata to identify the correct show
   const showsUrl = `${baseUrl}/shows/showdate/${showInfo.date}.json?apikey=${encodeURIComponent(sourceConfig.apiKey)}`;
+  logger.logCurl("GET", showsUrl);
   const showsResponse = await fetch(showsUrl);
   if (!showsResponse.ok) {
     throw new Error(`API error: ${showsResponse.status} ${showsResponse.statusText}`);
@@ -87,6 +89,7 @@ async function fetchPhishNet(
 
   // Step 2: Fetch the actual setlist data using showid
   const setlistUrl = `${baseUrl}/setlists/showid/${show.showid}.json?apikey=${encodeURIComponent(sourceConfig.apiKey)}`;
+  logger.logCurl("GET", setlistUrl);
   const setlistResponse = await fetch(setlistUrl);
   if (!setlistResponse.ok) {
     throw new Error(`API error fetching setlist: ${setlistResponse.status} ${setlistResponse.statusText}`);
@@ -110,6 +113,7 @@ async function fetchKGLW(
   const baseUrl = sourceConfig.url ?? "https://kglw.net/api/v2";
   const url = `${baseUrl}/setlists/showdate/${showInfo.date}.json`;
 
+  logger.logCurl("GET", url);
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`API error: ${response.status} ${response.statusText}`);
@@ -142,6 +146,10 @@ async function fetchSetlistFm(
   });
 
   const url = `${baseUrl}/search/setlists?${params}`;
+  logger.logCurl("GET", url, {
+    Accept: "application/json",
+    "x-api-key": sourceConfig.apiKey,
+  });
   const response = await fetch(url, {
     headers: {
       Accept: "application/json",

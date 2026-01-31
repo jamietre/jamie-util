@@ -21,6 +21,38 @@ export interface ConversionConfig {
   };
 }
 
+/** LLM provider configuration */
+export interface LLMConfig {
+  /** Whether LLM assistance is enabled */
+  enabled: boolean;
+  /** LLM provider to use (e.g., "ollama", "anthropic", "openai") */
+  provider: "ollama" | "anthropic" | "openai";
+  /** Model name to use (e.g., "qwen2.5:7b", "claude-sonnet-4-5-20250929") */
+  model: string;
+  /** API endpoint URL (for ollama and self-hosted providers) */
+  apiEndpoint?: string;
+  /** API key (for cloud providers like anthropic, openai) */
+  apiKey?: string;
+  /** Maximum tokens per request */
+  maxTokens?: number;
+  /** Whether to automatically apply LLM suggestions without user confirmation */
+  autoApply: boolean;
+  /** Maximum tokens allowed per run (budget limit) */
+  maxTokensPerRun?: number;
+}
+
+/** Web search provider configuration */
+export interface WebSearchConfig {
+  /** Whether web search is enabled */
+  enabled: boolean;
+  /** Web search provider to use */
+  provider: "brave" | "serper";
+  /** API key for the search provider */
+  apiKey: string;
+  /** Maximum number of search results to return (default: 10) */
+  maxResults?: number;
+}
+
 /** Per-band configuration, merged with defaults */
 export interface BandConfig {
   /** Display name for the artist (if different from config key) */
@@ -47,6 +79,8 @@ export interface Config {
   libraryBasePath: string;
   downloadDir?: string; // Optional directory for downloaded files (defaults to OS temp)
   setlistSources: Record<string, SetlistSourceConfig>;
+  llm?: LLMConfig; // Optional LLM configuration
+  webSearch?: WebSearchConfig; // Optional web search configuration
   defaults: BandConfig;
   bands: Record<string, Partial<BandConfig>>;
 }
@@ -106,6 +140,9 @@ export interface CliFlags {
   batch: boolean;
   "dry-run": boolean;
   "skip-conversion": boolean;
+  "use-llm": boolean; // Enable LLM for identification (overrides config)
+  "use-web": boolean; // Enable web search for identification (overrides config)
+  debug: boolean; // Enable debug logging
   split?: string[]; // Track split specifications (e.g., "S2T17 12:22:00")
   merge?: string[]; // Track merge specifications (e.g., "S1T01 S1T02 S1T03")
   url?: string; // Download from URL instead of using local file
