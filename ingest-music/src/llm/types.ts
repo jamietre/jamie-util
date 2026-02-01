@@ -3,7 +3,8 @@ export type LLMRequestType =
   | "setlist_mismatch"
   | "date_extraction"
   | "artist_identification"
-  | "track_matching";
+  | "track_matching"
+  | "parse_merge_instructions";
 
 /** Base LLM request */
 export interface LLMRequest {
@@ -83,4 +84,22 @@ export interface ArtistIdentificationContext {
   filename: string;
   possibleArtists?: string[]; // List of band names from config
   textFiles?: Record<string, string>;
+}
+
+/** Context for parsing user merge instructions */
+export interface ParseMergeInstructionsContext {
+  userInstructions: string; // Natural language instructions from user
+  audioFiles: string[]; // List of audio file names
+  setlist: Array<{ title: string; set: number; position: number }>;
+  fileCount: number;
+  setlistCount: number;
+}
+
+/** Response for parsing user merge instructions */
+export interface ParseMergeInstructionsSuggestion {
+  type: "parse_merge_instructions";
+  merges?: MergeSuggestion[];
+  splits?: SplitSuggestion[];
+  reasoning: string;
+  confidence: number;
 }

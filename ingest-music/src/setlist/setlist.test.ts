@@ -271,6 +271,22 @@ describe("parseKGLWResponse", () => {
     expect(result.source).toBe("kglw.net");
     expect(result.url).toBe("https://kglw.net/setlists/2024-08-16");
   });
+
+  it("handles permalink without leading slash", () => {
+    const data = {
+      data: [{ songname: "Song", setnumber: "1", position: 1, permalink: "king-gizzard-the-lizard-wizard-november-14-2025-poolen-copenhagen-denmark.html" }],
+    };
+    const result = parseKGLWResponse(data, kglwShowInfo);
+    expect(result.url).toBe("https://kglw.net/setlists/king-gizzard-the-lizard-wizard-november-14-2025-poolen-copenhagen-denmark.html");
+  });
+
+  it("handles permalink with slash but without /setlists/", () => {
+    const data = {
+      data: [{ songname: "Song", setnumber: "1", position: 1, permalink: "/2024-08-16-forest-hills" }],
+    };
+    const result = parseKGLWResponse(data, kglwShowInfo);
+    expect(result.url).toBe("https://kglw.net/setlists/2024-08-16-forest-hills");
+  });
 });
 
 describe("parseSetlistFmResponse", () => {

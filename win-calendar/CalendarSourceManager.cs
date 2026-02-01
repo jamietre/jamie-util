@@ -96,12 +96,7 @@ public class CalendarSourceManager
         }
 
         // Deduplicate meetings by subject + start time
-        var beforeCount = allMeetings.Count;
         var deduplicated = DeduplicateMeetings(allMeetings);
-        if (beforeCount != deduplicated.Count)
-        {
-            _log?.Invoke($"Deduplication: {beforeCount} meetings -> {deduplicated.Count} after removing duplicates");
-        }
 
         // Update MinutesUntilStart for all meetings
         var now = DateTime.Now;

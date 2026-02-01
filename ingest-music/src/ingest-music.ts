@@ -17,7 +17,7 @@ import type {
 import { loadConfig, resolveBandConfig } from "./config/config.js";
 import { parseZipFilename } from "./matching/parse-filename.js";
 import { parseLocation } from "./matching/location-parser.js";
-import { extractArchive, listAudioFiles, listNonAudioFiles, cleanupTempDir, isArchive, readTextFiles } from "./utils/extract.js";
+import { extractArchive, listAudioFiles, listNonAudioFiles, cleanupTempDir, isArchive, readTextFiles, scanArchiveManifest, type ArchiveManifest } from "./utils/extract.js";
 import { createLLMService } from "./llm/index.js";
 import { createWebSearchService } from "./websearch/index.js";
 import { ShowIdentificationOrchestrator, FilenameStrategy, AudioFileListStrategy, WebSearchStrategy, presentIdentificationResults } from "./identification/index.js";
@@ -199,6 +199,258 @@ async function processBatch(
   return results;
 }
 
+/**
+ * Pre-flight validation phase.
+ * Scans archive, checks track counts, and determines if processing can succeed.
+ * Returns planned merges if LLM suggests them.
+ */
+interface PreflightResult {
+  canProceed: boolean;
+  manifest: ArchiveManifest | null;
+  plannedMerges?: Array<{ tracks: number[] }>;
+  reason?: string;
+}
+
+async function preflightValidation(
+  zipPath: string,
+  setlist: { songs: Array<{ title: string; set: number; position: number }> },
+  config: Config,
+  flags: CliFlags,
+  onProgress: ProgressCallback
+): Promise<PreflightResult> {
+  // Step 1: Scan archive manifest (without extracting)
+  onProgress("\nScanning archive contents...");
+  const manifest = await scanArchiveManifest(zipPath);
+
+  if (!manifest) {
+    // Archive format doesn't support scanning (e.g., tar.gz, rar)
+    // We'll have to extract first and check later
+    return { canProceed: true, manifest: null };
+  }
+
+  const audioFileCount = manifest.audioFiles.length;
+  const setlistCount = setlist.songs.length;
+
+  onProgress(`Found ${audioFileCount} audio file(s) in archive`);
+
+  // Step 2: Check if track counts match
+  if (audioFileCount === setlistCount) {
+    // Counts match - proceed with extraction
+    return { canProceed: true, manifest };
+  }
+
+  // Step 3: Track count mismatch - try LLM analysis
+  const shouldUseLlm = flags["use-llm"] || (config.llm?.enabled ?? false);
+
+  if (!shouldUseLlm || !config.llm) {
+    // No LLM available - show files and fail fast
+    onProgress("\nTrack count mismatch detected!");
+    onProgress(`Audio files: ${audioFileCount}, Setlist songs: ${setlistCount}`);
+
+    // Display audio files found in archive
+    onProgress("\nAudio files in archive:");
+    manifest.audioFiles.forEach((file, idx) => {
+      onProgress(`  ${idx + 1}. ${file}`);
+    });
+
+    // Display setlist for comparison
+    const songsBySet = new Map<number, typeof setlist.songs>();
+    for (const song of setlist.songs) {
+      if (!songsBySet.has(song.set)) {
+        songsBySet.set(song.set, []);
+      }
+      songsBySet.get(song.set)!.push(song);
+    }
+
+    onProgress("\nSetlist from API:");
+    for (const [setNum, songs] of Array.from(songsBySet.entries()).sort((a, b) => a[0] - b[0])) {
+      const setName = setNum === 3 ? 'Encore' : `Set ${setNum}`;
+      onProgress(`  ${setName}:`);
+      for (const song of songs) {
+        onProgress(`    ${song.position}. ${song.title}`);
+      }
+    }
+
+    return {
+      canProceed: false,
+      manifest,
+      reason: `\nTrack count mismatch: ${audioFileCount} audio files vs ${setlistCount} setlist songs. Enable LLM (--use-llm) to attempt auto-resolution.`,
+    };
+  }
+
+  onProgress("\nTrack count mismatch detected!");
+  onProgress(`Audio files: ${audioFileCount}, Setlist songs: ${setlistCount}`);
+
+  // Display audio files found in archive
+  onProgress("\nAudio files in archive:");
+  manifest.audioFiles.forEach((file, idx) => {
+    onProgress(`  ${idx + 1}. ${file}`);
+  });
+
+  // Display setlist for comparison
+  const songsBySet = new Map<number, typeof setlist.songs>();
+  for (const song of setlist.songs) {
+    if (!songsBySet.has(song.set)) {
+      songsBySet.set(song.set, []);
+    }
+    songsBySet.get(song.set)!.push(song);
+  }
+
+  onProgress("\nSetlist from API:");
+  for (const [setNum, songs] of Array.from(songsBySet.entries()).sort((a, b) => a[0] - b[0])) {
+    const setName = setNum === 3 ? 'Encore' : `Set ${setNum}`;
+    onProgress(`  ${setName}:`);
+    for (const song of songs) {
+      onProgress(`    ${song.position}. ${song.title}`);
+    }
+  }
+
+  onProgress("\nUsing LLM to analyze mismatch...");
+
+  const llmService = createLLMService(config.llm);
+  if (!llmService) {
+    return {
+      canProceed: false,
+      manifest,
+      reason: "LLM service could not be created.",
+    };
+  }
+
+  // Step 4: Run LLM analysis on filenames
+  const suggestion = await llmService.resolveSetlistMismatch({
+    audioFiles: manifest.audioFiles,
+    setlist: setlist.songs.map((s) => ({
+      title: s.title,
+      set: s.set,
+      position: s.position,
+    })),
+    fileCount: audioFileCount,
+    setlistCount,
+  });
+
+  // Always display LLM analysis (even if low confidence)
+  onProgress("\n" + "=".repeat(60));
+  onProgress("LLM Analysis:");
+  onProgress("=".repeat(60));
+  onProgress(suggestion.reasoning);
+  onProgress(`Confidence: ${(suggestion.confidence * 100).toFixed(0)}%`);
+  onProgress("=".repeat(60));
+
+  if (suggestion.confidence < 0.5) {
+    // LLM couldn't figure it out - ask user for instructions in interactive mode
+    if (!flags.batch && !flags["dry-run"]) {
+      onProgress("\nLLM analysis has low confidence. You can provide manual merge/split instructions.");
+      onProgress("Examples:");
+      onProgress("  - 'merge tracks 4 and 5'");
+      onProgress("  - 'merge tracks 1, 2, 3'");
+      onProgress("  - 'split track 5 at 3:30'");
+      onProgress("  - or just press Enter to skip");
+
+      const rl = readline.createInterface({ input: stdin, output: stdout });
+      const userInstructions = await rl.question("\nEnter merge/split instructions: ");
+      rl.close();
+
+      if (userInstructions && userInstructions.trim().length > 0) {
+        onProgress("\nParsing your instructions...");
+        const parsedSuggestion = await llmService.parseMergeInstructions({
+          userInstructions: userInstructions.trim(),
+          audioFiles: manifest.audioFiles,
+          setlist: setlist.songs.map((s) => ({
+            title: s.title,
+            set: s.set,
+            position: s.position,
+          })),
+          fileCount: audioFileCount,
+          setlistCount,
+        });
+
+        onProgress("\n" + "=".repeat(60));
+        onProgress("Parsed Instructions:");
+        onProgress("=".repeat(60));
+        onProgress(parsedSuggestion.reasoning);
+        onProgress(`Confidence: ${(parsedSuggestion.confidence * 100).toFixed(0)}%`);
+        onProgress("=".repeat(60));
+
+        if (parsedSuggestion.confidence >= 0.5) {
+          // Check for splits
+          if (parsedSuggestion.splits && parsedSuggestion.splits.length > 0) {
+            return {
+              canProceed: false,
+              manifest,
+              reason: "Your instructions include track splits, but timestamps cannot be applied automatically. Please use the --split flag with manual extraction.",
+            };
+          }
+
+          // Use parsed merges
+          if (parsedSuggestion.merges && parsedSuggestion.merges.length > 0) {
+            onProgress(`\n✓ Will apply ${parsedSuggestion.merges.length} merge(s) based on your instructions`);
+            return {
+              canProceed: true,
+              manifest,
+              plannedMerges: parsedSuggestion.merges,
+            };
+          }
+        } else {
+          onProgress("\nCould not parse your instructions. Please check the format and try again.");
+        }
+      }
+    }
+
+    return {
+      canProceed: false,
+      manifest,
+      reason: `LLM analysis has low confidence (${(suggestion.confidence * 100).toFixed(0)}%). Cannot proceed automatically.`,
+    };
+  }
+
+  // Step 5: Check what LLM suggests
+  if (suggestion.splits && suggestion.splits.length > 0) {
+    return {
+      canProceed: false,
+      manifest,
+      reason: "LLM suggested track splits, but timestamps cannot be determined automatically. Manual splitting required.",
+    };
+  }
+
+  if (suggestion.merges && suggestion.merges.length > 0) {
+    onProgress(`\n✓ LLM suggests merging ${suggestion.merges.length} track group(s):`);
+    for (const merge of suggestion.merges) {
+      const trackNums = merge.tracks.map((t) => `Track ${t}`).join(" + ");
+      onProgress(`  - ${trackNums}`);
+    }
+
+    // Ask user for confirmation in interactive mode
+    if (!flags.batch && !flags["dry-run"]) {
+      const confirmed = await confirmLLMSuggestion("\nApply these merges during extraction?");
+      if (!confirmed) {
+        return {
+          canProceed: false,
+          manifest,
+          reason: "User declined LLM merge suggestions.",
+        };
+      }
+    }
+
+    // Convert LLM suggestions to merge format
+    const plannedMerges = suggestion.merges.map((m) => ({
+      tracks: m.tracks,
+    }));
+
+    return {
+      canProceed: true,
+      manifest,
+      plannedMerges,
+    };
+  }
+
+  // No merges or splits suggested - counts don't match for another reason
+  return {
+    canProceed: false,
+    manifest,
+    reason: "LLM could not determine how to resolve track count mismatch.",
+  };
+}
+
 async function processSingleArchive(
   zipPath: string,
   flags: CliFlags,
@@ -350,12 +602,56 @@ async function processSingleArchive(
   onProgress(`\nShow: ${showInfo.artist}`);
   onProgress(`Date: ${showInfo.date}`);
   onProgress(`Venue: ${showInfo.venue}, ${locationDisplay}`);
-  onProgress(`Setlist: ${setlist.songs.length} song(s) across ${new Set(setlist.songs.map((s) => s.set)).size} set(s)`);
+
+  // Display fetched setlist with songs
+  const setCount = new Set(setlist.songs.map((s) => s.set)).size;
+  onProgress(`\nSetlist from ${setlist.source} (${setlist.songs.length} song(s) across ${setCount} set(s)):`);
   if (setlist.url) {
-    onProgress(`Setlist URL: ${setlist.url}`);
+    onProgress(`URL: ${setlist.url}`);
   }
 
-  // Step 5: Prepare working directory (extract archive or use directory)
+  // Group songs by set
+  const songsBySet = new Map<number, typeof setlist.songs>();
+  for (const song of setlist.songs) {
+    if (!songsBySet.has(song.set)) {
+      songsBySet.set(song.set, []);
+    }
+    songsBySet.get(song.set)!.push(song);
+  }
+
+  // Display songs by set
+  for (const [setNum, songs] of Array.from(songsBySet.entries()).sort((a, b) => a[0] - b[0])) {
+    const setName = setNum === 3 ? 'Encore' : `Set ${setNum}`;
+    onProgress(`\n  ${setName}:`);
+    for (const song of songs) {
+      onProgress(`    ${song.position}. ${song.title}`);
+    }
+  }
+
+  // Step 5: Pre-flight validation (scan archive, check counts, plan merges)
+  const preflight = await preflightValidation(zipPath, setlist, config, flags, onProgress);
+
+  // Display text files found in archive (for comparison with fetched setlist)
+  if (preflight.manifest && Object.keys(preflight.manifest.textFiles).length > 0) {
+    onProgress("\n" + "=".repeat(60));
+    onProgress("Text Files Found in Archive:");
+    onProgress("=".repeat(60));
+    for (const [filename, content] of Object.entries(preflight.manifest.textFiles)) {
+      onProgress(`\n--- ${filename} ---`);
+      // Truncate very long files
+      const displayContent = content.length > 1000
+        ? content.substring(0, 1000) + "\n... (truncated)"
+        : content;
+      onProgress(displayContent);
+    }
+    onProgress("=".repeat(60));
+  }
+
+  if (!preflight.canProceed) {
+    throw new Error(preflight.reason || "Pre-flight validation failed");
+  }
+
+  // Step 6: Prepare working directory (extract archive or use directory)
   onProgress("\nPreparing working directory...");
   const workingDir = await extractArchive(zipPath, onProgress);
   // Keep track of original source directory for non-audio files
@@ -390,8 +686,11 @@ async function processSingleArchive(
 
     // Step 5: If merging or splitting is needed and we're in a source directory (not temp),
     // copy to temp first to avoid modifying user's files
-    const needsMerge = flags.merge && flags.merge.length > 0;
+    const needsManualMerge = flags.merge && flags.merge.length > 0;
+    const needsPlannedMerge = preflight.plannedMerges && preflight.plannedMerges.length > 0;
     const needsSplit = flags.split && flags.split.length > 0;
+    const needsMerge = needsManualMerge || needsPlannedMerge;
+
     if ((needsMerge || needsSplit) && !workingDir.shouldCleanup) {
       onProgress("\nCopying to temp directory for merging/splitting...");
       const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ingest-music-"));
@@ -409,10 +708,28 @@ async function processSingleArchive(
       workingDir.shouldCleanup = true;
     }
 
-    // Step 6a: Apply track merges if specified (BEFORE splits and analysis)
+    // Step 6a: Apply track merges (BEFORE splits and analysis)
+    // Apply both planned merges (from LLM pre-flight) and manual merges (from flags)
     if (needsMerge) {
       try {
-        const merges = flags.merge!.map(parseMergeSpec);
+        const merges: Array<{ tracks: Array<{ set: number; track: number }> }> = [];
+
+        // Add planned merges from LLM pre-flight analysis
+        if (needsPlannedMerge) {
+          onProgress("\nApplying LLM-suggested merges...");
+          for (const merge of preflight.plannedMerges!) {
+            merges.push({
+              tracks: merge.tracks.map((trackNum) => ({ set: 1, track: trackNum })),
+            });
+          }
+        }
+
+        // Add manual merges from command-line flags
+        if (needsManualMerge) {
+          onProgress("\nApplying manual merges...");
+          merges.push(...flags.merge!.map(parseMergeSpec));
+        }
+
         audioFiles = await applyMergesToFiles(
           audioFiles,
           merges,
@@ -467,7 +784,18 @@ async function processSingleArchive(
     try {
       matched = matchTracks(audioInfos, setlist.songs, bandConfig.encoreInSet2);
     } catch (error) {
-      // Handle track count mismatch with LLM assistance
+      // If pre-flight already analyzed and applied merges, matching should succeed
+      // If we're here with a mismatch after pre-flight, something unexpected happened
+      if (preflight.plannedMerges && preflight.plannedMerges.length > 0) {
+        throw new Error(
+          `Track matching failed even after applying LLM-suggested merges. ` +
+          `This may indicate the LLM analysis was incorrect or audio files don't match the suggested pattern. ` +
+          `Original error: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+
+      // Fallback: Handle track count mismatch with LLM assistance
+      // This only happens for archives that couldn't be scanned in pre-flight (tar.gz, rar, etc.)
       const shouldUseLlm = flags["use-llm"] || (config.llm?.enabled ?? false);
       if (error instanceof TrackCountMismatchError && shouldUseLlm && config.llm) {
         onProgress("\nTrack count mismatch detected!");

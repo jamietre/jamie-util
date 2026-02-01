@@ -317,9 +317,17 @@ export function parseKGLWResponse(
   }));
 
   // Build kglw.net URL from permalink if available
-  const setlistUrl = data.data[0]?.permalink
-    ? `https://kglw.net${data.data[0].permalink}`
-    : `https://kglw.net/setlists/${showInfo.date}`;
+  let setlistUrl: string;
+  if (data.data[0]?.permalink) {
+    const permalink = data.data[0].permalink;
+    // Ensure permalink starts with /
+    const path = permalink.startsWith('/') ? permalink : `/${permalink}`;
+    // If permalink doesn't include /setlists/, add it
+    const fullPath = path.startsWith('/setlists/') ? path : `/setlists${path}`;
+    setlistUrl = `https://kglw.net${fullPath}`;
+  } else {
+    setlistUrl = `https://kglw.net/setlists/${showInfo.date}`;
+  }
 
   return {
     artist: showInfo.artist,

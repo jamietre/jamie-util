@@ -6,6 +6,8 @@ import type {
   SetlistMismatchSuggestion,
   ArtistIdentificationContext,
   ArtistSuggestion,
+  ParseMergeInstructionsContext,
+  ParseMergeInstructionsSuggestion,
 } from "./types.js";
 
 export class LLMService {
@@ -100,6 +102,38 @@ export class LLMService {
       type: "artist_identification",
       artist: response.data.artist,
       bandConfigKey: response.data.bandConfigKey,
+      reasoning: response.data.reasoning || response.reasoning,
+      confidence: response.data.confidence ?? response.confidence,
+    };
+  }
+
+  /**
+   * Parse user's natural language merge/split instructions.
+   * Converts instructions like "merge tracks 4 and 5 into 3" into structured operations.
+   */
+  async parseMergeInstructions(
+    context: ParseMergeInstructionsContext
+  ): Promise<ParseMergeInstructionsSuggestion> {
+    const prompt = this.buildParseMergeInstructionsPrompt(context);
+
+    const response = await this.provider.query<ParseMergeInstructionsSuggestion>({
+      type: "parse_merge_instructions",
+      context,
+      prompt,
+    });
+
+    if (!response.success) {
+      return {
+        type: "parse_merge_instructions",
+        reasoning: response.reasoning,
+        confidence: 0,
+      };
+    }
+
+    return {
+      type: "parse_merge_instructions",
+      merges: response.data.merges,
+      splits: response.data.splits,
       reasoning: response.data.reasoning || response.reasoning,
       confidence: response.data.confidence ?? response.confidence,
     };
@@ -246,5 +280,54 @@ Respond with valid JSON only:
 }`);
 
     return parts.join("\n");
+  }
+
+  /**
+   * Build prompt for parsing user merge instructions
+   */
+  private buildParseMergeInstructionsPrompt(
+    context: ParseMergeInstructionsContext
+  ): string {
+    return `You are helping parse user's natural language instructions for merging or splitting audio tracks.
+
+User's instructions:
+"${context.userInstructions}"
+
+Audio files (${context.fileCount} total):
+${context.audioFiles.map((f, i) => `${i + 1}. ${f}`).join("\n")}
+
+Official setlist (${context.setlistCount} songs):
+${context.setlist.map((s) => `Set ${s.set}, #${s.position}: ${s.title}`).join("\n")}
+
+Parse the user's instructions and convert them to structured merge/split operations.
+
+Common instruction patterns:
+- "merge tracks 4 and 5 into 3" → means merge tracks 4 and 5 together (resulting track becomes track 3)
+- "merge 1, 2, 3" → means merge tracks 1, 2, and 3 together
+- "combine tracks 10 and 11" → means merge tracks 10 and 11
+- "split track 5 at 3:30" → means split track 5 at timestamp 3:30
+
+IMPORTANT MERGE FORMAT:
+- Track numbers are 1-indexed (first track is 1, not 0)
+- Each merge specifies which consecutive tracks to merge
+- Format: { "tracks": [track1, track2, ...] }
+- Example: Merge tracks 4 and 5 → { "tracks": [4, 5] }
+- Example: Merge tracks 1, 2, 3 → { "tracks": [1, 2, 3] }
+
+IMPORTANT SPLIT FORMAT:
+- Track number is 1-indexed
+- Timestamp format: "MM:SS" or "HH:MM:SS"
+- Format: { "track": trackNum, "timestamp": "MM:SS" }
+- Example: Split track 5 at 3:30 → { "track": 5, "timestamp": "3:30" }
+
+Respond with valid JSON only:
+{
+  "merges": [{ "tracks": [4, 5] }],
+  "splits": [{ "track": 3, "timestamp": "12:22" }],
+  "reasoning": "Parsed user instructions: merge tracks 4 and 5, split track 3 at 12:22",
+  "confidence": 0.9
+}
+
+If you cannot parse the instructions, set confidence to 0 and explain why in reasoning.`;
   }
 }
