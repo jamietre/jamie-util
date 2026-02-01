@@ -111,6 +111,9 @@ export class LLMService {
   private buildSetlistMismatchPrompt(
     context: SetlistMismatchContext
   ): string {
+    const fileDiff = context.fileCount - context.setlistCount;
+    const scenario = fileDiff > 0 ? "MORE_FILES" : fileDiff < 0 ? "FEWER_FILES" : "SAME_COUNT";
+
     return `You are analyzing why ${context.fileCount} audio files don't match a setlist with ${context.setlistCount} songs.
 
 Audio files (${context.fileCount} total):
@@ -119,50 +122,67 @@ ${context.audioFiles.map((f, i) => `${i + 1}. ${f}`).join("\n")}
 Official setlist (${context.setlistCount} songs):
 ${context.setlist.map((s) => `Set ${s.set}, #${s.position}: ${s.title}`).join("\n")}
 
-CRITICAL UNDERSTANDING:
-The audio files include intro/banter/talking tracks that are NOT in the official setlist.
-These non-song tracks must ALL be merged with the next actual song track.
+SCENARIO ANALYSIS:
+${scenario === "MORE_FILES" ? `
+You have ${fileDiff} MORE audio files than setlist songs (${context.fileCount} > ${context.setlistCount}).
+This means some files are intro/banter/talking tracks that need to be MERGED with actual songs.
 
 STEP-BY-STEP PROCESS:
 
 1. IDENTIFY NON-SONG TRACKS:
    Look for tracks with titles containing: "Intro", "Banter", "Talking", "DJ", "Outro", "Announcement"
    These tracks are NOT in the setlist - they are filler content between songs.
-   You MUST identify ALL of them, not just some.
+   You MUST identify ALL ${fileDiff} of them.
 
 2. MERGE EVERY NON-SONG TRACK:
    - Each intro/banter track must merge with the NEXT track
    - If multiple intro/banter tracks are consecutive, they ALL merge with the next song
-   - Example: Track 1 "DJ Intro" → merge with track 2
-   - Example: Track 10 "Banter #1" → merge with track 11
-   - Example: Track 13 "Billy Intro" → merge with track 14
-   - IMPORTANT: After merging, there should be ZERO intro/banter tracks remaining
+   - Example: Track 1 "DJ Intro" → merge [1, 2]
+   - Example: Track 10 "Banter #1" → merge [10, 11]
+   - IMPORTANT: Each merge is TWO tracks only: [intro_track, next_track]
+   - DO NOT create duplicate merges for the same track numbers
+   - After merging all ${fileDiff} intro/banter tracks, you'll have ${context.setlistCount} songs
 
-3. MERGE FORMAT:
-   - Each merge: { "tracks": [track1, track2] } for merging track1 into track2
-   - List merges from END to BEGINNING (highest track numbers first)
-   - Example: [{ "tracks": [23, 24] }, { "tracks": [17, 18] }, { "tracks": [1, 2] }]
+3. VERIFY YOUR WORK:
+   - Count: You should suggest exactly ${fileDiff} unique merges
+   - Check: No duplicate track numbers in your merge list
+   - Math: ${context.fileCount} files - ${fileDiff} merges = ${context.setlistCount} songs ✓` :
+scenario === "FEWER_FILES" ? `
+You have ${Math.abs(fileDiff)} FEWER audio files than setlist songs (${context.fileCount} < ${context.setlistCount}).
+This means ${Math.abs(fileDiff)} audio files contain MULTIPLE setlist songs and need to be SPLIT.
 
-4. SPLITS (avoid if possible):
-   - ONLY suggest splits if ONE audio file contains MULTIPLE setlist songs
-   - DO NOT suggest splits for intro/banter - those should be MERGED
-   - If you suggest any splits, we CANNOT proceed automatically
+CRITICAL: We CANNOT automatically split files because we don't know the timestamps.
 
-5. TITLE MATCHING:
-   - "Mary" matches "Mary Won't You Call My Name?" (shortened titles are fine)
-   - "A Head With Wings" matches "Head With Wings" (minor variations OK)
-   - Focus on matching the COUNT of songs, not exact title matches
+Your response MUST:
+1. Set "merges": [] (empty - no merges possible)
+2. Set "splits": [] (empty - we can't proceed with splits)
+3. Explain in "reasoning" which files likely contain multiple songs
+4. Set "confidence": 0.0 (we cannot proceed automatically)
 
-YOUR GOAL:
-After your suggested merges are applied, the number of remaining tracks should equal the setlist count (${context.setlistCount}).
-Check your work: ${context.fileCount} files - (number of intro/banter tracks) = ${context.setlistCount} songs
+Example reasoning: "Audio file count (${context.fileCount}) is less than setlist count (${context.setlistCount}), suggesting ${Math.abs(fileDiff)} files contain multiple songs. Cannot proceed automatically - manual splitting required."` :
+`
+You have the SAME number of audio files and setlist songs (${context.fileCount} = ${context.setlistCount}).
+The mismatch is likely due to title differences, not track count issues.
+
+Check if track titles roughly match the setlist (partial matches OK).
+If they match, suggest NO merges or splits - the issue is just naming.`}
+
+MERGE FORMAT (only for MORE_FILES scenario):
+- Each merge: { "tracks": [intro_track_num, next_track_num] }
+- List merges from END to BEGINNING (highest track numbers first)
+- NO DUPLICATES - each track number should appear in at most ONE merge
+- Example: [{ "tracks": [23, 24] }, { "tracks": [17, 18] }, { "tracks": [10, 11] }]
+
+TITLE MATCHING:
+- "Mary" matches "Mary Won't You Call My Name?" (shortened OK)
+- "A Head With Wings" matches "Head With Wings" (minor variations OK)
 
 Respond with valid JSON only:
 {
-  "merges": [{ "tracks": [23, 24] }, { "tracks": [17, 18] }, { "tracks": [1, 2] }],  // END to BEGINNING
-  "splits": [],
-  "reasoning": "Found 7 intro/banter tracks: 1 (DJ Intro), 6 (Mark Sandman Intro), 8 (Dana Intro), 10 (Banter #1), 13 (Billy Intro), 17 (Banter #2), 23 (Banter #3). Each merges with next track. 26 files - 7 non-songs = 19 setlist songs.",
-  "confidence": 0.95
+  "merges": [{ "tracks": [23, 24] }, { "tracks": [17, 18] }],  // Empty [] if FEWER_FILES or SAME_COUNT
+  "splits": [],  // Always empty (we cannot auto-split)
+  "reasoning": "Explain what you found and what should be done",
+  "confidence": 0.95  // 0.0 if FEWER_FILES scenario
 }`;
   }
 

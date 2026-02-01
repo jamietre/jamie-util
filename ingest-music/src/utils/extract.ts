@@ -16,6 +16,16 @@ const AUDIO_EXTENSIONS = getAudioExtensions();
 /** Supported archive extensions and their format identifiers */
 type ArchiveFormat = "zip" | "tar.gz" | "gz" | "rar";
 
+/** Information about archive contents without extracting */
+export interface ArchiveManifest {
+  /** List of audio file paths in the archive */
+  audioFiles: string[];
+  /** Text files found in archive (filename -> content) */
+  textFiles: Record<string, string>;
+  /** Total number of files in archive */
+  totalFiles: number;
+}
+
 /**
  * Detect archive format from filename.
  */
@@ -365,4 +375,91 @@ export async function readTextFiles(dir: string): Promise<Record<string, string>
   }
 
   return results;
+}
+
+/**
+ * Scan an archive to get its contents without extracting.
+ * Useful for pre-flight validation and failing fast.
+ *
+ * Currently only supports ZIP files and directories.
+ * For other formats, returns null (caller should extract first).
+ */
+export async function scanArchiveManifest(
+  inputPath: string
+): Promise<ArchiveManifest | null> {
+  const stats = await fs.stat(inputPath);
+
+  // Handle directory
+  if (stats.isDirectory()) {
+    const audioFiles = await listAudioFiles(inputPath);
+    const textFiles = await readTextFiles(inputPath);
+
+    return {
+      audioFiles: audioFiles.map(f => path.basename(f)),
+      textFiles,
+      totalFiles: audioFiles.length + Object.keys(textFiles).length,
+    };
+  }
+
+  // Handle archives
+  const format = detectArchiveFormat(inputPath);
+
+  if (format === "zip") {
+    return await scanZipManifest(inputPath);
+  }
+
+  // Other formats (tar.gz, rar) not yet supported for scanning
+  return null;
+}
+
+/**
+ * Scan a ZIP archive without extracting.
+ */
+async function scanZipManifest(archivePath: string): Promise<ArchiveManifest> {
+  const audioFiles: string[] = [];
+  const textFiles: Record<string, string> = {};
+  let totalFiles = 0;
+
+  const textExtensions = new Set([".txt", ".nfo", ".md", ".log"]);
+  const maxTextFileSize = 100 * 1024; // 100KB max for text files
+
+  const zipFile = await open(archivePath);
+  try {
+    for await (const entry of zipFile) {
+      // Skip directories
+      if (entry.filename.endsWith("/")) continue;
+
+      totalFiles++;
+      const basename = path.basename(entry.filename);
+      const ext = path.extname(basename).toLowerCase();
+
+      // Check if audio file
+      if (AUDIO_EXTENSIONS.has(ext)) {
+        audioFiles.push(basename);
+      }
+      // Check if text file (and small enough to read)
+      else if (textExtensions.has(ext) && entry.uncompressedSize <= maxTextFileSize) {
+        try {
+          const readStream = await entry.openReadStream();
+          const chunks: Buffer[] = [];
+
+          for await (const chunk of readStream) {
+            chunks.push(chunk);
+          }
+
+          const content = Buffer.concat(chunks).toString("utf-8");
+          textFiles[basename] = content;
+        } catch {
+          // Skip files that can't be read
+        }
+      }
+    }
+  } finally {
+    await zipFile.close();
+  }
+
+  // Sort audio files naturally
+  audioFiles.sort(naturalCompare);
+
+  return { audioFiles, textFiles, totalFiles };
 }

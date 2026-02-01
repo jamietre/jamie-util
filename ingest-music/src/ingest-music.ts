@@ -20,7 +20,7 @@ import { parseLocation } from "./matching/location-parser.js";
 import { extractArchive, listAudioFiles, listNonAudioFiles, cleanupTempDir, isArchive, readTextFiles } from "./utils/extract.js";
 import { createLLMService } from "./llm/index.js";
 import { createWebSearchService } from "./websearch/index.js";
-import { ShowIdentificationOrchestrator, FilenameStrategy, AudioFileListStrategy, presentIdentificationResults } from "./identification/index.js";
+import { ShowIdentificationOrchestrator, FilenameStrategy, AudioFileListStrategy, WebSearchStrategy, presentIdentificationResults } from "./identification/index.js";
 import { searchSetlistsByCity, searchSetlistsByVenue, type SetlistSearchResult } from "./setlist/search.js";
 import { promptUserToSelectShow } from "./setlist/disambiguation.js";
 import { downloadToTemp } from "./utils/download.js";
@@ -206,16 +206,13 @@ async function processSingleArchive(
   onProgress: ProgressCallback
 ): Promise<IngestResult> {
   // Step 1: Parse show info from filename/directory name
-  // For directories, parse the parent directory name (which usually has show info)
-  // For archives, parse the archive filename
   let nameToParse;
   const stats = await fs.stat(zipPath);
   if (stats.isDirectory()) {
-    // Use parent directory name for parsing (e.g., "King Gizzard... - Live in Berlin '25")
-    // The subdirectory (e.g., "SOUNDBOARD MIX") usually doesn't have show info
-    const parent = path.dirname(zipPath);
-    nameToParse = path.basename(parent);
+    // Use the directory's own name for parsing
+    nameToParse = path.basename(zipPath);
   } else {
+    // Use the archive filename for parsing
     nameToParse = path.basename(zipPath);
   }
 
@@ -267,7 +264,13 @@ async function processSingleArchive(
     const orchestrator = new ShowIdentificationOrchestrator();
     orchestrator.registerStrategy(new FilenameStrategy());
     orchestrator.registerStrategy(new AudioFileListStrategy());
-    // TODO: Add TextFileStrategy, WebSearchFilenameStrategy, WebSearchLLMStrategy
+
+    // Register web search strategy if enabled
+    if (shouldUseWeb && webSearchService) {
+      orchestrator.registerStrategy(new WebSearchStrategy());
+    }
+
+    // TODO: Add TextFileStrategy, WebSearchLLMStrategy
 
     // Run identification
     const identificationResults = await orchestrator.identifyShow(

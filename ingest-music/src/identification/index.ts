@@ -16,3 +16,4 @@ export type {
 // Strategies
 export { FilenameStrategy } from "./strategies/filename.js";
 export { AudioFileListStrategy } from "./strategies/audio-tracklist.js";
+export { WebSearchStrategy } from "./strategies/websearch.js";
