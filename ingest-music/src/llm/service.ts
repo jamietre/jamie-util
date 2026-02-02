@@ -8,6 +8,10 @@ import type {
   ArtistSuggestion,
   ParseMergeInstructionsContext,
   ParseMergeInstructionsSuggestion,
+  ModifySetlistContext,
+  ModifySetlistSuggestion,
+  CombinedInstructionsContext,
+  CombinedInstructionsSuggestion,
 } from "./types.js";
 
 export class LLMService {
@@ -17,7 +21,7 @@ export class LLMService {
    * Analyze a setlist mismatch and suggest merge/split operations
    */
   async resolveSetlistMismatch(
-    context: SetlistMismatchContext
+    context: SetlistMismatchContext,
   ): Promise<SetlistMismatchSuggestion> {
     const prompt = this.buildSetlistMismatchPrompt(context);
 
@@ -79,7 +83,7 @@ export class LLMService {
    * Identify artist from filename or text files
    */
   async identifyArtist(
-    context: ArtistIdentificationContext
+    context: ArtistIdentificationContext,
   ): Promise<ArtistSuggestion> {
     const prompt = this.buildArtistIdentificationPrompt(context);
 
@@ -110,17 +114,19 @@ export class LLMService {
   /**
    * Parse user's natural language merge/split instructions.
    * Converts instructions like "merge tracks 4 and 5 into 3" into structured operations.
+   * @deprecated Use parseCombinedInstructions instead
    */
   async parseMergeInstructions(
-    context: ParseMergeInstructionsContext
+    context: ParseMergeInstructionsContext,
   ): Promise<ParseMergeInstructionsSuggestion> {
     const prompt = this.buildParseMergeInstructionsPrompt(context);
 
-    const response = await this.provider.query<ParseMergeInstructionsSuggestion>({
-      type: "parse_merge_instructions",
-      context,
-      prompt,
-    });
+    const response =
+      await this.provider.query<ParseMergeInstructionsSuggestion>({
+        type: "parse_merge_instructions",
+        context,
+        prompt,
+      });
 
     if (!response.success) {
       return {
@@ -140,13 +146,48 @@ export class LLMService {
   }
 
   /**
+   * Parse user's combined natural language instructions.
+   * Can handle both setlist modifications AND merge/split operations in one prompt.
+   * Examples:
+   *   "remove drum solo from setlist, merge tracks 4 and 5"
+   *   "remove maddy jam, split track 3 at 12:30"
+   */
+  async parseCombinedInstructions(
+    context: CombinedInstructionsContext,
+  ): Promise<CombinedInstructionsSuggestion> {
+    const prompt = this.buildCombinedInstructionsPrompt(context);
+
+    const response = await this.provider.query<CombinedInstructionsSuggestion>({
+      type: "combined_instructions" as any, // Type not in union yet
+      context,
+      prompt,
+    });
+
+    if (!response.success) {
+      return {
+        type: "combined_instructions",
+        reasoning: response.reasoning,
+        confidence: 0,
+      };
+    }
+
+    return {
+      type: "combined_instructions",
+      modifiedSetlist: response.data.modifiedSetlist,
+      merges: response.data.merges,
+      splits: response.data.splits,
+      reasoning: response.data.reasoning || response.reasoning,
+      confidence: response.data.confidence ?? response.confidence,
+    };
+  }
+
+  /**
    * Build prompt for setlist mismatch analysis
    */
-  private buildSetlistMismatchPrompt(
-    context: SetlistMismatchContext
-  ): string {
+  private buildSetlistMismatchPrompt(context: SetlistMismatchContext): string {
     const fileDiff = context.fileCount - context.setlistCount;
-    const scenario = fileDiff > 0 ? "MORE_FILES" : fileDiff < 0 ? "FEWER_FILES" : "SAME_COUNT";
+    const scenario =
+      fileDiff > 0 ? "MORE_FILES" : fileDiff < 0 ? "FEWER_FILES" : "SAME_COUNT";
 
     return `You are analyzing why ${context.fileCount} audio files don't match a setlist with ${context.setlistCount} songs.
 
@@ -157,7 +198,9 @@ Official setlist (${context.setlistCount} songs):
 ${context.setlist.map((s) => `Set ${s.set}, #${s.position}: ${s.title}`).join("\n")}
 
 SCENARIO ANALYSIS:
-${scenario === "MORE_FILES" ? `
+${
+  scenario === "MORE_FILES"
+    ? `
 You have ${fileDiff} MORE audio files than setlist songs (${context.fileCount} > ${context.setlistCount}).
 This means some files are intro/banter/talking tracks that need to be MERGED with actual songs.
 
@@ -180,8 +223,9 @@ STEP-BY-STEP PROCESS:
 3. VERIFY YOUR WORK:
    - Count: You should suggest exactly ${fileDiff} unique merges
    - Check: No duplicate track numbers in your merge list
-   - Math: ${context.fileCount} files - ${fileDiff} merges = ${context.setlistCount} songs ✓` :
-scenario === "FEWER_FILES" ? `
+   - Math: ${context.fileCount} files - ${fileDiff} merges = ${context.setlistCount} songs ✓`
+    : scenario === "FEWER_FILES"
+      ? `
 You have ${Math.abs(fileDiff)} FEWER audio files than setlist songs (${context.fileCount} < ${context.setlistCount}).
 This means ${Math.abs(fileDiff)} audio files contain MULTIPLE setlist songs and need to be SPLIT.
 
@@ -193,13 +237,14 @@ Your response MUST:
 3. Explain in "reasoning" which files likely contain multiple songs
 4. Set "confidence": 0.0 (we cannot proceed automatically)
 
-Example reasoning: "Audio file count (${context.fileCount}) is less than setlist count (${context.setlistCount}), suggesting ${Math.abs(fileDiff)} files contain multiple songs. Cannot proceed automatically - manual splitting required."` :
-`
+Example reasoning: "Audio file count (${context.fileCount}) is less than setlist count (${context.setlistCount}), suggesting ${Math.abs(fileDiff)} files contain multiple songs. Cannot proceed automatically - manual splitting required."`
+      : `
 You have the SAME number of audio files and setlist songs (${context.fileCount} = ${context.setlistCount}).
 The mismatch is likely due to title differences, not track count issues.
 
 Check if track titles roughly match the setlist (partial matches OK).
-If they match, suggest NO merges or splits - the issue is just naming.`}
+If they match, suggest NO merges or splits - the issue is just naming.`
+}
 
 MERGE FORMAT (only for MORE_FILES scenario):
 - Each merge: { "tracks": [intro_track_num, next_track_num] }
@@ -254,9 +299,11 @@ Respond with valid JSON only:
    * Build prompt for artist identification
    */
   private buildArtistIdentificationPrompt(
-    context: ArtistIdentificationContext
+    context: ArtistIdentificationContext,
   ): string {
-    const parts = [`Identify the artist/band name from the following information:`];
+    const parts = [
+      `Identify the artist/band name from the following information:`,
+    ];
     parts.push(`\nFilename: ${context.filename}`);
 
     if (context.possibleArtists && context.possibleArtists.length > 0) {
@@ -286,7 +333,7 @@ Respond with valid JSON only:
    * Build prompt for parsing user merge instructions
    */
   private buildParseMergeInstructionsPrompt(
-    context: ParseMergeInstructionsContext
+    context: ParseMergeInstructionsContext,
   ): string {
     return `You are helping parse user's natural language instructions for merging or splitting audio tracks.
 
@@ -328,6 +375,88 @@ Respond with valid JSON only:
   "confidence": 0.9
 }
 
+If you cannot parse the instructions, set confidence to 0 and explain why in reasoning.`;
+  }
+
+  /**
+   * Build prompt for parsing combined setlist modification and merge instructions
+   */
+  private buildCombinedInstructionsPrompt(
+    context: CombinedInstructionsContext,
+  ): string {
+    return `You are helping parse user's natural language instructions for modifying a setlist AND/OR merging/splitting audio tracks.
+
+User's instructions:
+"${context.userInstructions}"
+
+Audio files (${context.fileCount} total):
+${context.audioFiles.map((f, i) => `${i + 1}. ${f}`).join("\n")}
+
+Official setlist (${context.setlistCount} songs):
+${context.setlist.map((s, i) => `${i + 1}. Set ${s.set}, #${s.position}: ${s.title}`).join("\n")}
+
+Parse the user's instructions and convert them to:
+1. A modified setlist (if they want to add/remove/rename songs)
+2. Merge/split operations (if they want to merge or split audio files)
+
+SETLIST MODIFICATION INSTRUCTIONS:
+
+Common patterns:
+- "remove drum solo from setlist" → remove the song titled "Drum Solo" from the setlist
+- "remove drum solo and maddy jam" → remove both songs
+- "rename track 3 to intro" → change the title of position 3
+- "add intro before song 1" → insert a new song at the beginning
+- "use the songs from the archive" / "ignore official setlist" → CREATE NEW setlist from archive files
+
+
+When parsing song lists:
+
+- Include ALL songs from lists, even if they have names like "Set", "Intro", "Outro" - these are actual song titles!
+
+When user says "use archive" or "ignore official setlist":
+- Create a NEW setlist with EXACTLY ${context.fileCount} songs (one for EACH of the ${context.fileCount} audio files)
+- Extract song titles from the audio filenames:
+  - Strip leading track numbers: "1. Swan Song.wav" → "Swan Song"
+  - Strip file extensions: "Swan Song.wav" → "Swan Song"
+  - Keep the exact titles from filenames
+- Match files 1-to-1: File 1 → Position 1, File 2 → Position 2, etc.
+- Your modifiedSetlist array MUST have exactly ${context.fileCount} entries
+- DO NOT suggest any merges or splits - the archive is already correct as-is
+- Set "merges": [] and "splits": []
+- Example: If archive has ["1. Song A.wav", "2. Set.wav", "3. Song B.wav"], create setlist with 3 entries:
+  [
+    { "title": "Song A", "set": 1, "position": 1 },
+    { "title": "Set", "set": 1, "position": 2 },
+    { "title": "Song B", "set": 1, "position": 3 }
+  ]
+  with "merges": [] and "splits": []
+
+When removing songs:
+- Remove the matching song(s) from the setlist array
+- Renumber remaining songs' positions sequentially
+- Update the setlistCount accordingly
+
+MERGE/SPLIT INSTRUCTIONS:
+Common patterns:
+- "merge tracks 4 and 5" → merge audio files 4 and 5
+- "split track 3 at 12:30" → split audio file 3 at timestamp 12:30
+
+IMPORTANT: Track numbers refer to AUDIO FILES (1-indexed), not setlist positions!
+
+RESPONSE FORMAT:
+{
+  "modifiedSetlist": [
+    { "title": "Song Name", "set": 1, "position": 1 },
+    ...
+  ],
+  "merges": [{ "tracks": [4, 5] }],
+  "splits": [{ "track": 3, "timestamp": "12:30" }],
+  "reasoning": "Removed 'Drum Solo' from setlist (was position 5), merged audio tracks 4 and 5",
+  "confidence": 0.9
+}
+
+If no setlist changes requested, omit "modifiedSetlist" (or set to null).
+If no merges/splits requested, set those to empty arrays.
 If you cannot parse the instructions, set confidence to 0 and explain why in reasoning.`;
   }
 }

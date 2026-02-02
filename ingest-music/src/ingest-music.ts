@@ -202,12 +202,13 @@ async function processBatch(
 /**
  * Pre-flight validation phase.
  * Scans archive, checks track counts, and determines if processing can succeed.
- * Returns planned merges if LLM suggests them.
+ * Returns planned merges and/or modified setlist if LLM suggests them.
  */
 interface PreflightResult {
   canProceed: boolean;
   manifest: ArchiveManifest | null;
   plannedMerges?: Array<{ tracks: number[] }>;
+  modifiedSetlist?: Array<{ title: string; set: number; position: number }>;
   reason?: string;
 }
 
@@ -336,23 +337,43 @@ async function preflightValidation(
   onProgress(`Confidence: ${(suggestion.confidence * 100).toFixed(0)}%`);
   onProgress("=".repeat(60));
 
-  if (suggestion.confidence < 0.5) {
-    // LLM couldn't figure it out - ask user for instructions in interactive mode
+  // Check if LLM can provide an automatic solution
+  const hasSplits = suggestion.splits && suggestion.splits.length > 0;
+  const hasMerges = suggestion.merges && suggestion.merges.length > 0;
+  const fewerFilesNoSolution = audioFileCount < setlistCount && !hasMerges;
+
+  // Can only proceed automatically if:
+  // 1. LLM has a valid solution (merges, not splits)
+  // 2. High confidence (>= 0.5)
+  const canProceedAutomatically = !hasSplits && !fewerFilesNoSolution && suggestion.confidence >= 0.5;
+
+  // Always prompt user if we can't proceed automatically
+  const needsUserInput = !canProceedAutomatically;
+
+  if (needsUserInput) {
+    // LLM couldn't figure it out OR suggested splits - ask user for instructions in interactive mode
     if (!flags.batch && !flags["dry-run"]) {
-      onProgress("\nLLM analysis has low confidence. You can provide manual merge/split instructions.");
+      if (suggestion.splits && suggestion.splits.length > 0) {
+        onProgress("\nLLM suggests splitting files, but timestamps cannot be determined automatically.");
+        onProgress("You can provide alternative instructions (e.g., remove songs from setlist, merge files instead).");
+      } else {
+        onProgress("\nLLM analysis has low confidence. You can provide manual instructions.");
+      }
+
       onProgress("Examples:");
-      onProgress("  - 'merge tracks 4 and 5'");
+      onProgress("  - 'remove drum solo from setlist'");
+      onProgress("  - 'remove maddy jam, merge tracks 4 and 5'");
       onProgress("  - 'merge tracks 1, 2, 3'");
       onProgress("  - 'split track 5 at 3:30'");
       onProgress("  - or just press Enter to skip");
 
       const rl = readline.createInterface({ input: stdin, output: stdout });
-      const userInstructions = await rl.question("\nEnter merge/split instructions: ");
+      const userInstructions = await rl.question("\nEnter instructions: ");
       rl.close();
 
       if (userInstructions && userInstructions.trim().length > 0) {
         onProgress("\nParsing your instructions...");
-        const parsedSuggestion = await llmService.parseMergeInstructions({
+        const parsedSuggestion = await llmService.parseCombinedInstructions({
           userInstructions: userInstructions.trim(),
           audioFiles: manifest.audioFiles,
           setlist: setlist.songs.map((s) => ({
@@ -381,13 +402,24 @@ async function preflightValidation(
             };
           }
 
+          // Apply setlist modifications if present
+          let resultSetlist = parsedSuggestion.modifiedSetlist;
+          if (resultSetlist) {
+            onProgress(`\n✓ Setlist modified: ${resultSetlist.length} songs`);
+          }
+
           // Use parsed merges
           if (parsedSuggestion.merges && parsedSuggestion.merges.length > 0) {
-            onProgress(`\n✓ Will apply ${parsedSuggestion.merges.length} merge(s) based on your instructions`);
+            onProgress(`✓ Will apply ${parsedSuggestion.merges.length} merge(s)`);
+          }
+
+          // If we have either setlist modifications or merges, we can proceed
+          if (resultSetlist || (parsedSuggestion.merges && parsedSuggestion.merges.length > 0)) {
             return {
               canProceed: true,
               manifest,
               plannedMerges: parsedSuggestion.merges,
+              modifiedSetlist: resultSetlist,
             };
           }
         } else {
@@ -396,19 +428,19 @@ async function preflightValidation(
       }
     }
 
+    // Failed to get valid user input or in batch mode
+    if (suggestion.splits && suggestion.splits.length > 0) {
+      return {
+        canProceed: false,
+        manifest,
+        reason: "LLM suggested track splits, but timestamps cannot be determined automatically. Manual splitting required.",
+      };
+    }
+
     return {
       canProceed: false,
       manifest,
       reason: `LLM analysis has low confidence (${(suggestion.confidence * 100).toFixed(0)}%). Cannot proceed automatically.`,
-    };
-  }
-
-  // Step 5: Check what LLM suggests
-  if (suggestion.splits && suggestion.splits.length > 0) {
-    return {
-      canProceed: false,
-      manifest,
-      reason: "LLM suggested track splits, but timestamps cannot be determined automatically. Manual splitting required.",
     };
   }
 
@@ -649,6 +681,30 @@ async function processSingleArchive(
 
   if (!preflight.canProceed) {
     throw new Error(preflight.reason || "Pre-flight validation failed");
+  }
+
+  // Apply modified setlist if user provided one
+  if (preflight.modifiedSetlist) {
+    onProgress("\nApplying modified setlist...");
+    setlist.songs = preflight.modifiedSetlist;
+    onProgress(`Updated setlist: ${setlist.songs.length} song(s)`);
+
+    // Display the modified setlist
+    const songsBySet = new Map<number, typeof setlist.songs>();
+    for (const song of setlist.songs) {
+      if (!songsBySet.has(song.set)) {
+        songsBySet.set(song.set, []);
+      }
+      songsBySet.get(song.set)!.push(song);
+    }
+
+    for (const [setNum, songs] of Array.from(songsBySet.entries()).sort((a, b) => a[0] - b[0])) {
+      const setName = setNum === 3 ? 'Encore' : `Set ${setNum}`;
+      onProgress(`  ${setName}:`);
+      for (const song of songs) {
+        onProgress(`    ${song.position}. ${song.title}`);
+      }
+    }
   }
 
   // Step 6: Prepare working directory (extract archive or use directory)
