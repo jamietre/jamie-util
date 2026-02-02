@@ -5,6 +5,8 @@ import type { MatchedTrack, ShowInfo, AudioInfo, SetlistSong } from "../config/t
 describe("buildTemplateVars", () => {
   const baseAudioInfo: AudioInfo = {
     filePath: "/path/to/file.flac",
+    codec: undefined,
+    container: undefined,
     bitsPerSample: 16,
     sampleRate: 48000,
     trackNumber: 1,

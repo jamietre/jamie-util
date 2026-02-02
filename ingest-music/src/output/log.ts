@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { ShowInfo, Setlist, MatchedTrack, BandConfig } from "../config/types.js";
+import type { ShowInfo, Setlist, MatchedTrack, BandConfig, SourceFormatInfo } from "../config/types.js";
 import { renderTemplate, sanitize, zeroPad } from "./template.js";
 import { buildTemplateVars } from "./tagger.js";
 
@@ -14,7 +14,9 @@ export function generateLogContent(
   matched: MatchedTrack[],
   bandConfig: BandConfig,
   sourceArchive: string,
-  nonAudioFiles: Array<{ fullPath: string; relativePath: string }>
+  nonAudioFiles: Array<{ fullPath: string; relativePath: string }>,
+  sourceFormat?: SourceFormatInfo,
+  conversionApplied?: string
 ): string {
   const lines: string[] = [];
 
@@ -40,6 +42,31 @@ export function generateLogContent(
   lines.push(`- **Setlist Source:** ${setlist.source}`);
   lines.push(`- **Setlist URL:** ${setlist.url}`);
   lines.push("");
+
+  // Source format (if available)
+  if (sourceFormat) {
+    lines.push("## Source Format");
+    lines.push("");
+    const codecDisplay = sourceFormat.container
+      ? `${sourceFormat.codec} (${sourceFormat.container})`
+      : sourceFormat.codec;
+    const bitDepthDisplay = `${sourceFormat.bitsPerSample}-bit`;
+    const sampleRateDisplay = `${(sourceFormat.sampleRate / 1000).toFixed(1)}kHz`;
+    const compressionType = sourceFormat.lossless ? "lossless" : "lossy";
+    lines.push(`- **Codec:** ${codecDisplay}`);
+    lines.push(`- **Bit Depth:** ${bitDepthDisplay}`);
+    lines.push(`- **Sample Rate:** ${sampleRateDisplay}`);
+    lines.push(`- **Compression:** ${compressionType}`);
+    lines.push("");
+  }
+
+  // Conversion applied (if any)
+  if (conversionApplied) {
+    lines.push("## Conversion Applied");
+    lines.push("");
+    lines.push(`- **Rule:** ${conversionApplied}`);
+    lines.push("");
+  }
 
   // Setlist
   lines.push("## Setlist");

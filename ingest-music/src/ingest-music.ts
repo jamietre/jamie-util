@@ -13,6 +13,7 @@ import type {
   MatchedTrack,
   BandConfig,
   AudioInfo,
+  SourceFormatInfo,
 } from "./config/types.js";
 import { loadConfig, resolveBandConfig } from "./config/config.js";
 import { parseZipFilename } from "./matching/parse-filename.js";
@@ -26,6 +27,8 @@ import { promptUserToSelectShow } from "./setlist/disambiguation.js";
 import { downloadToTemp } from "./utils/download.js";
 import { verifyRequiredTools } from "./utils/startup.js";
 import { analyzeAllAudio, convertAllIfNeeded } from "./audio/audio.js";
+import { isLosslessFormat } from "./audio/formats.js";
+import { findMatchingRule, ruleRequiresConversion } from "./config/conversion-rules.js";
 import { applySplitsToFiles, parseSplitSpec, applyMergesToFiles, parseMergeSpec } from "./audio/split.js";
 import { fetchSetlist } from "./setlist/setlist.js";
 import { matchTracks, TrackCountMismatchError } from "./matching/match.js";
@@ -820,8 +823,40 @@ async function processSingleArchive(
     onProgress("\nAnalyzing audio...");
     let audioInfos = await analyzeAllAudio(audioFiles, onProgress);
 
+    // Capture source format from first file (before conversion)
+    const firstFile = audioInfos[0];
+    const sourceFormat: SourceFormatInfo | undefined = firstFile ? {
+      codec: firstFile.codec ?? path.extname(firstFile.filePath).substring(1).toUpperCase(),
+      container: firstFile.container,
+      bitsPerSample: firstFile.bitsPerSample ?? 16,
+      sampleRate: firstFile.sampleRate ?? 44100,
+      lossless: isLosslessFormat(firstFile.filePath),
+    } : undefined;
+
+    // Display source format info
+    if (sourceFormat) {
+      const codecDisplay = sourceFormat.container
+        ? `${sourceFormat.codec} (${sourceFormat.container})`
+        : sourceFormat.codec;
+      const formatDesc = `${codecDisplay}, ${sourceFormat.bitsPerSample}-bit/${(sourceFormat.sampleRate / 1000).toFixed(1)}kHz, ${sourceFormat.lossless ? "lossless" : "lossy"}`;
+      onProgress(`  Source format: ${formatDesc}`);
+    }
+
     // Step 8: Convert if needed (creates temp dir if needed)
     onProgress("\nChecking conversion requirements...");
+
+    // Determine conversion rule before converting
+    let conversionApplied: string | undefined = undefined;
+    if (firstFile && !flags["skip-conversion"]) {
+      const rule = findMatchingRule(firstFile);
+      if (ruleRequiresConversion(rule)) {
+        conversionApplied = rule.name;
+        if (rule.description) {
+          conversionApplied += ` - ${rule.description}`;
+        }
+      }
+    }
+
     const conversionResult = await convertAllIfNeeded(
       audioInfos,
       workingDir,
@@ -1074,7 +1109,9 @@ async function processSingleArchive(
       matched,
       bandConfig,
       zipPath,
-      nonAudioFiles
+      nonAudioFiles,
+      sourceFormat,
+      conversionApplied
     );
     await writeLogFile(targetDir, logContent);
     onProgress(`  Created: ingest-log.md`);

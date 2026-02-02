@@ -9,6 +9,8 @@ function makeInfo(
 ): AudioInfo {
   return {
     filePath: `/tmp/test${extension}`,
+    codec: undefined,
+    container: undefined,
     bitsPerSample,
     sampleRate,
     trackNumber: undefined,

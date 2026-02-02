@@ -10,6 +10,8 @@ import type { AudioInfo, SetlistSong } from "../config/types.js";
 function makeAudio(name: string, trackNumber?: number): AudioInfo {
   return {
     filePath: `/tmp/${name}`,
+    codec: undefined,
+    container: undefined,
     bitsPerSample: 16,
     sampleRate: 44100,
     trackNumber,

@@ -88,12 +88,23 @@ export interface Config {
 /** Audio file properties from music-metadata */
 export interface AudioInfo {
   filePath: string;
+  codec: string | undefined;
+  container: string | undefined;
   bitsPerSample: number | undefined;
   sampleRate: number | undefined;
   trackNumber: number | undefined;
   discNumber: number | undefined;
   title: string | undefined;
   duration: number | undefined;
+}
+
+/** Source format information captured before conversion */
+export interface SourceFormatInfo {
+  codec: string;
+  container: string | undefined;
+  bitsPerSample: number;
+  sampleRate: number;
+  lossless: boolean;
 }
 
 /** A single song in a setlist */

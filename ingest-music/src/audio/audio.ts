@@ -27,6 +27,8 @@ export async function analyzeAudio(filePath: string): Promise<AudioInfo> {
 
   return {
     filePath,
+    codec: metadata.format.codec,
+    container: metadata.format.container,
     bitsPerSample: metadata.format.bitsPerSample,
     sampleRate: metadata.format.sampleRate,
     trackNumber: metadata.common.track?.no ?? undefined,

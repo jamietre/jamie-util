@@ -18,6 +18,8 @@ describe("ingest-music pipeline helpers", () => {
   const track: MatchedTrack = {
     audioFile: {
       filePath: "/tmp/d1t01.flac",
+      codec: undefined,
+      container: undefined,
       bitsPerSample: 16,
       sampleRate: 44100,
       trackNumber: 1,
