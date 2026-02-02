@@ -51,9 +51,6 @@ public class TrayApplicationContext : ApplicationContext
         var checkNowItem = new ToolStripMenuItem("Check Now", null, (s, e) => CheckMeetingsManual());
         _contextMenu.Items.Add(checkNowItem);
 
-        var testToastUpdateItem = new ToolStripMenuItem("Test Toast Update", null, (s, e) => ToastUpdateTest.RunTest());
-        _contextMenu.Items.Add(testToastUpdateItem);
-
         var clearNotificationsItem = new ToolStripMenuItem("Clear Notifications", null, (s, e) => ClearNotifications());
         _contextMenu.Items.Add(clearNotificationsItem);
 
@@ -966,9 +963,11 @@ public class TrayApplicationContext : ApplicationContext
                     _reminderService.DismissMeeting(meetingKey);
                     break;
                 case "skip":
+                    _reminderService.DismissReactiveToast(meetingKey);
                     _reminderService.SkipToStart(meetingKey);
                     break;
                 case "snooze":
+                    _reminderService.DismissReactiveToast(meetingKey);
                     if (extraData != null)
                         _reminderService.SnoozeMeeting(meetingKey, extraData);
                     break;

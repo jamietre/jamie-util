@@ -23,6 +23,9 @@ public class ReminderService
 
     private DateTime _lastAutomationAlert = DateTime.MinValue;
 
+    private readonly Dictionary<string, ReactiveToast> _activeToasts = new();
+    private readonly object _toastsLock = new object();
+
     public ReminderService()
     {
         DataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "win-calendar");
@@ -186,59 +189,91 @@ public class ReminderService
     private void ShowReminder(Meeting meeting, int stageIndex)
     {
         var stage = Stages[stageIndex];
-        var meetingStarted = meeting.MinutesUntilStart <= 0;
         var key = GetMeetingKey(meeting);
         var encodedKey = Uri.EscapeDataString(key);
 
-        // Build title
-        string title;
-        if (stage.IsOverdue)
-        {
-            var minutesLate = Math.Abs((int)meeting.MinutesUntilStart);
-            title = stage.IsFinal
-                ? $"FINAL REMINDER: Meeting started {minutesLate} min ago!"
-                : $"Meeting started {minutesLate} min ago!";
-        }
-        else if (meetingStarted)
-        {
-            title = "Meeting starting NOW!";
-        }
-        else
-        {
-            var mins = (int)Math.Ceiling(meeting.MinutesUntilStart);
-            title = mins == 1 ? "Meeting in 1 minute!" : $"Meeting in {mins} minutes";
-        }
+        // Dismiss any existing reactive toast for this meeting
+        DismissReactiveToast(key);
 
-        // Build message
-        var message = meeting.Subject;
-        if (!string.IsNullOrEmpty(meeting.Location))
-            message += $"\n{meeting.Location}";
+        // Create reactive toast configuration
+        var config = new ReactiveToastConfig
+        {
+            Tag = $"meeting-{key.GetHashCode():X}",
+            Group = "meetings",
+            PollIntervalMs = 1000,
+            AttributionText = "WinCalendar"
+        };
 
-        // Build toast - use Reminder scenario so it stays until button is clicked
-        // Clicking the toast body will snooze for 30 seconds
-        var snooze30s = Uri.EscapeDataString(DateTime.Now.AddSeconds(30).ToString("o"));
-        var builder = new ToastContentBuilder()
-            .AddText(title)
-            .AddText(message)
-            .AddAttributionText("WinCalendar")
-            .AddArgument("action", $"snooze/{encodedKey}/{snooze30s}")
-            .SetToastScenario(ToastScenario.Reminder);
+        // Line 1 (static): Title based on stage
+        config.TextProviders.Add(() =>
+        {
+            var currentStage = Stages[stageIndex];
+            if (currentStage.IsOverdue)
+            {
+                return currentStage.IsFinal
+                    ? "FINAL REMINDER: Meeting Started"
+                    : "Meeting Started";
+            }
+            else if (meeting.MinutesUntilStart <= 0)
+            {
+                return "Meeting Starting NOW!";
+            }
+            else
+            {
+                return "Meeting Reminder";
+            }
+        });
+
+        // Line 2 (dynamic): Time status
+        config.TextProviders.Add(() =>
+        {
+            var minutesUntil = (meeting.Start - DateTime.Now).TotalMinutes;
+
+            if (minutesUntil <= 0)
+            {
+                var minutesLate = Math.Abs((int)minutesUntil);
+                if (minutesLate == 0)
+                    return "Starting NOW!";
+                else if (minutesLate == 1)
+                    return "Started 1 minute ago";
+                else
+                    return $"Started {minutesLate} minutes ago";
+            }
+            else
+            {
+                var mins = (int)Math.Ceiling(minutesUntil);
+                if (mins == 1)
+                    return "In 1 minute";
+                else
+                    return $"In {mins} minutes";
+            }
+        });
+
+        // Line 3 (dynamic): Meeting subject + location
+        config.TextProviders.Add(() =>
+        {
+            var text = meeting.Subject;
+            if (!string.IsNullOrEmpty(meeting.Location))
+                text += $"\n{meeting.Location}";
+            return text;
+        });
 
         // Check for meeting URL
         var meetingUrl = GetMeetingUrl(meeting.Location);
 
         // Add buttons based on stage
+        config.Buttons = new List<ToastButton>();
         if (stageIndex >= 2)
         {
             // 1 min before or later: Join (if available) + Dismiss
             if (meetingUrl != null)
             {
                 var encodedUrl = Uri.EscapeDataString(meetingUrl);
-                builder.AddButton(new ToastButton()
+                config.Buttons.Add(new ToastButton()
                     .SetContent("Join")
                     .AddArgument("action", $"join/{encodedKey}/{encodedUrl}"));
             }
-            builder.AddButton(new ToastButton()
+            config.Buttons.Add(new ToastButton()
                 .SetContent("Dismiss")
                 .AddArgument("action", $"dismiss/{encodedKey}"));
         }
@@ -250,56 +285,56 @@ public class ReminderService
                 var snoozeTime = DateTime.Now.AddMinutes(stage.SnoozeMinutes);
                 var snoozeTimeStr = snoozeTime.ToString("H:mm");
                 var snoozeTimeIso = Uri.EscapeDataString(snoozeTime.ToString("o"));
-                builder.AddButton(new ToastButton()
+                config.Buttons.Add(new ToastButton()
                     .SetContent($"Snooze until {snoozeTimeStr}")
                     .AddArgument("action", $"snooze/{encodedKey}/{snoozeTimeIso}"));
             }
-            builder.AddButton(new ToastButton()
+            config.Buttons.Add(new ToastButton()
                 .SetContent("Remind at start")
                 .AddArgument("action", $"skip/{encodedKey}"));
-            builder.AddButton(new ToastButton()
+            config.Buttons.Add(new ToastButton()
                 .SetContent("Dismiss")
                 .AddArgument("action", $"dismiss/{encodedKey}"));
         }
 
         // Set scenario and audio based on urgency
+        var meetingStarted = meeting.MinutesUntilStart <= 0;
         if (stage.IsOverdue)
         {
             // Overdue: urgent looping alarm
-            builder.SetToastScenario(ToastScenario.Alarm);
-            builder.AddAudio(new ToastAudio
+            config.Scenario = ToastScenario.Alarm;
+            config.Audio = new ToastAudio
             {
                 Src = new Uri("ms-winsoundevent:Notification.Looping.Alarm2"),
                 Loop = true
-            });
+            };
         }
         else if (meetingStarted)
         {
             // Meeting starting NOW: attention-grabbing alarm (non-looping)
-            builder.SetToastScenario(ToastScenario.Alarm);
-            builder.AddAudio(new ToastAudio
+            config.Scenario = ToastScenario.Alarm;
+            config.Audio = new ToastAudio
             {
                 Src = new Uri("ms-winsoundevent:Notification.Looping.Alarm")
-            });
+            };
         }
         else
         {
             // Upcoming reminder: standard reminder sound
-            builder.SetToastScenario(ToastScenario.Reminder);
-            builder.AddAudio(new ToastAudio
+            config.Scenario = ToastScenario.Reminder;
+            config.Audio = new ToastAudio
             {
                 Src = new Uri("ms-winsoundevent:Notification.Reminder")
-            });
+            };
         }
 
-        // No default click action - clicking toast body does nothing
-
-        // Show with unique tag
-        builder.Show(toast =>
+        // Create and show reactive toast
+        var reactiveToast = new ReactiveToast(config, Log);
+        lock (_toastsLock)
         {
-            toast.Tag = $"meeting-{key.GetHashCode():X}";
-            toast.Group = "meetings";
-        });
+            _activeToasts[key] = reactiveToast;
+        }
+        reactiveToast.Show();
 
         // Screen flash for started/overdue meetings
         if (stage.IsOverdue)
@@ -397,10 +432,25 @@ public class ReminderService
 
     public void DismissMeeting(string key)
     {
+        DismissReactiveToast(key);
         var state = LoadState();
         state.Dismissed[key] = true;
         SaveState(state);
         Log($"Dismissed meeting: {key}");
+    }
+
+    public void DismissReactiveToast(string key)
+    {
+        lock (_toastsLock)
+        {
+            if (_activeToasts.TryGetValue(key, out var toast))
+            {
+                toast.Dismiss();
+                toast.Dispose();
+                _activeToasts.Remove(key);
+                Log($"Dismissed reactive toast: {key}");
+            }
+        }
     }
 
     public void SkipToStart(string key)
