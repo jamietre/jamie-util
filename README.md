@@ -5,7 +5,6 @@
 Largely AI-built tools to automate some things I do. 
 
 - [Photo Sync](./photo-sync/README.md) - synchronize my android phone's photos to a local archive, organized by date
-- [Ingest Music](./ingest-music/README.md) - add live music into my permanent library using consistent tagging & naming
 - [WinCalendar](./win-calendar/README.md) - a calendar & reminder that has persistent notifications that can break through hyperfocus and a simple UX for upcoming meetings; connects with google & outlook
 
 ## What platform is this for
