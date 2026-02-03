@@ -1,5 +1,6 @@
 /** LLM request types */
 export type LLMRequestType =
+  | "archive_structure_analysis"
   | "setlist_mismatch"
   | "date_extraction"
   | "artist_identification"
@@ -136,4 +137,29 @@ export interface CombinedInstructionsSuggestion {
   splits?: SplitSuggestion[];
   reasoning: string;
   confidence: number;
+}
+
+/** Context for archive structure analysis */
+export interface ArchiveStructureContext {
+  archiveName: string;
+  directoryTreeText: string; // Formatted tree for display
+  audioExtensions: string[]; // [".flac", ".mp3", etc.]
+  excludePatterns: string[]; // From band config
+  totalFiles: number;
+  totalAudioFiles: number;
+}
+
+/** Response from archive structure analysis */
+export interface ArchiveStructureSuggestion {
+  type: "archive_structure_analysis";
+  /** Relative path to directory containing music files */
+  musicDirectory: string;
+  /** Relative paths to supplementary files (info.txt, artwork, etc.) */
+  supplementaryFiles: string[];
+  /** Explanation of the analysis */
+  reasoning: string;
+  /** Confidence score (0-1) */
+  confidence: number;
+  /** Optional: Issues detected (nested formats, incomplete sets, etc.) */
+  warnings?: string[];
 }

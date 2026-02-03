@@ -12,6 +12,8 @@ import type {
   ModifySetlistSuggestion,
   CombinedInstructionsContext,
   CombinedInstructionsSuggestion,
+  ArchiveStructureContext,
+  ArchiveStructureSuggestion,
 } from "./types.js";
 
 export class LLMService {
@@ -108,6 +110,41 @@ export class LLMService {
       bandConfigKey: response.data.bandConfigKey,
       reasoning: response.data.reasoning || response.reasoning,
       confidence: response.data.confidence ?? response.confidence,
+    };
+  }
+
+  /**
+   * Analyze archive directory structure to locate music files
+   * and identify relevant supplementary files.
+   */
+  async analyzeArchiveStructure(
+    context: ArchiveStructureContext,
+  ): Promise<ArchiveStructureSuggestion> {
+    const prompt = this.buildArchiveStructurePrompt(context);
+
+    const response = await this.provider.query<ArchiveStructureSuggestion>({
+      type: "archive_structure_analysis",
+      context,
+      prompt,
+    });
+
+    if (!response.success) {
+      return {
+        type: "archive_structure_analysis",
+        musicDirectory: ".", // Fallback to root
+        supplementaryFiles: [],
+        reasoning: response.reasoning,
+        confidence: 0,
+      };
+    }
+
+    return {
+      type: "archive_structure_analysis",
+      musicDirectory: response.data.musicDirectory || ".",
+      supplementaryFiles: response.data.supplementaryFiles || [],
+      reasoning: response.data.reasoning || response.reasoning,
+      confidence: response.data.confidence ?? response.confidence,
+      warnings: response.data.warnings,
     };
   }
 
@@ -458,5 +495,92 @@ RESPONSE FORMAT:
 If no setlist changes requested, omit "modifiedSetlist" (or set to null).
 If no merges/splits requested, set those to empty arrays.
 If you cannot parse the instructions, set confidence to 0 and explain why in reasoning.`;
+  }
+
+  /**
+   * Build prompt for archive structure analysis
+   */
+  private buildArchiveStructurePrompt(context: ArchiveStructureContext): string {
+    return `You are analyzing a music archive directory structure to locate audio files and identify relevant supplementary files.
+
+Archive: ${context.archiveName}
+Total files: ${context.totalFiles}
+Audio files found: ${context.totalAudioFiles}
+Supported audio formats: ${context.audioExtensions.join(", ")}
+Exclude patterns: ${context.excludePatterns.join(", ")}
+
+Directory structure:
+${context.directoryTreeText}
+
+TASK:
+
+1. IDENTIFY MUSIC DIRECTORY:
+   Find the directory path that contains the PRIMARY set of music files.
+
+   Rules:
+   - If music files are in multiple subdirectories (e.g., set1/, set2/, disc1/, disc2/), return their COMMON PARENT directory
+   - If both lossless (FLAC, WAV) and lossy (MP3, AAC) versions exist in separate directories, prefer the lossless directory
+   - Ignore duplicate format directories (e.g., if FLAC/ and MP3/ both exist with same tracks, choose FLAC/)
+   - Return relative path from archive root (use "." for root directory itself)
+
+   Examples:
+   - Music in /set1/ and /set2/ → return "." (parent contains both sets)
+   - Music in /archive/band-date/set1/ and /archive/band-date/set2/ → return "archive/band-date"
+   - Music in /FLAC/ with duplicates in /MP3/ → return "FLAC"
+   - Music directly in root → return "."
+
+2. IDENTIFY SUPPLEMENTARY FILES:
+   Find files that should be copied alongside the music:
+
+   Include:
+   - Text files with show information (.txt, .nfo, .md, .info)
+   - Artwork (images: .jpg, .jpeg, .png, .gif, PDFs)
+   - Checksums (.md5, .ffp, .txt with checksums)
+   - Liner notes, credits, recording info
+
+   Exclude:
+   - System files matching exclude patterns (${context.excludePatterns.join(", ")})
+   - Log files from ripping/encoding
+   - Duplicate text files (e.g., same info in multiple locations)
+   - Very large files (>10MB for non-image files)
+
+   Return: Array of relative paths from archive root
+
+3. REPORT WARNINGS (if any):
+   Detect potential issues:
+   - Incomplete sets (missing tracks in sequence)
+   - Mixed formats within same set
+   - Unusual structure that might indicate problems
+   - Multiple complete sets at different quality levels
+
+RESPONSE FORMAT:
+
+Respond with valid JSON only:
+{
+  "musicDirectory": "relative/path/to/music" or "." for root,
+  "supplementaryFiles": [
+    "relative/path/to/info.txt",
+    "relative/path/to/artwork.jpg"
+  ],
+  "reasoning": "Explanation: Music files are located in X because Y. Found Z supplementary files including...",
+  "confidence": 0.95,
+  "warnings": ["Warning 1", "Warning 2"] // Optional, omit if no warnings
+}
+
+EXAMPLES:
+
+Example 1 - Nested sets:
+Directory: phish2024/set1/, phish2024/set2/
+Response: { "musicDirectory": "phish2024", "reasoning": "Music organized in set subdirectories, using parent" }
+
+Example 2 - Multiple formats:
+Directory: FLAC/, MP3/
+Response: { "musicDirectory": "FLAC", "reasoning": "Prefer lossless FLAC over lossy MP3" }
+
+Example 3 - Flat structure:
+Directory: *.flac files in root
+Response: { "musicDirectory": ".", "reasoning": "Music files at root level" }
+
+Now analyze the directory structure above and respond with JSON:`;
   }
 }

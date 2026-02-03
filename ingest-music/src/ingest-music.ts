@@ -19,6 +19,7 @@ import { loadConfig, resolveBandConfig } from "./config/config.js";
 import { parseZipFilename } from "./matching/parse-filename.js";
 import { parseLocation } from "./matching/location-parser.js";
 import { extractArchive, listAudioFiles, listNonAudioFiles, cleanupTempDir, isArchive, readTextFiles, scanArchiveManifest, type ArchiveManifest } from "./utils/extract.js";
+import { checkForSubdirectories, buildDirectoryTree, formatDirectoryTree, countNodes, countAudioNodes } from "./utils/directory-tree.js";
 import { createLLMService } from "./llm/index.js";
 import { createWebSearchService } from "./websearch/index.js";
 import { ShowIdentificationOrchestrator, FilenameStrategy, AudioFileListStrategy, WebSearchStrategy, presentIdentificationResults } from "./identification/index.js";
@@ -27,7 +28,7 @@ import { promptUserToSelectShow } from "./setlist/disambiguation.js";
 import { downloadToTemp } from "./utils/download.js";
 import { verifyRequiredTools } from "./utils/startup.js";
 import { analyzeAllAudio, convertAllIfNeeded } from "./audio/audio.js";
-import { isLosslessFormat } from "./audio/formats.js";
+import { isLosslessFormat, getAudioExtensions } from "./audio/formats.js";
 import { findMatchingRule, ruleRequiresConversion } from "./config/conversion-rules.js";
 import { applySplitsToFiles, parseSplitSpec, applyMergesToFiles, parseMergeSpec } from "./audio/split.js";
 import { fetchSetlist } from "./setlist/setlist.js";
@@ -735,8 +736,97 @@ async function processSingleArchive(
     }
   }
 
+  // Step 6a: LLM-assisted structure analysis (if enabled and --dir not specified)
+  const extractedRoot = workingDir.path; // Save original extraction root
+  let supplementaryFilePaths: string[] = []; // Paths to supplementary files identified by LLM
+
+  // Check if LLM is enabled for structure analysis
+  const shouldUseLlm = flags["use-llm"] || (config.llm?.enabled ?? false);
+  const llmService = shouldUseLlm && config.llm ? createLLMService(config.llm) ?? undefined : undefined;
+
+  if (!flags.dir && shouldUseLlm && config.llm && llmService) {
+    // Optimization: Skip LLM if archive has no subdirectories
+    const hasSubdirectories = await checkForSubdirectories(
+      workingDir.path,
+      bandConfig.excludePatterns ?? []
+    );
+
+    if (!hasSubdirectories) {
+      onProgress("\nArchive has flat structure (no subdirectories), using root");
+    } else {
+      onProgress("\nAnalyzing archive structure with LLM...");
+
+      try {
+        // Build directory tree
+        const directoryTree = await buildDirectoryTree(
+          workingDir.path,
+          bandConfig.excludePatterns ?? [],
+          5 // Max depth 5
+        );
+
+        const analysis = await llmService.analyzeArchiveStructure({
+          archiveName: path.basename(zipPath),
+          directoryTreeText: formatDirectoryTree(directoryTree, 5),
+          audioExtensions: Array.from(getAudioExtensions()),
+          excludePatterns: bandConfig.excludePatterns ?? [],
+          totalFiles: countNodes(directoryTree, "file"),
+          totalAudioFiles: countAudioNodes(directoryTree),
+        });
+
+        // Display analysis
+        onProgress(`  Confidence: ${(analysis.confidence * 100).toFixed(0)}%`);
+        onProgress(`  ${analysis.reasoning}`);
+
+        if (analysis.warnings && analysis.warnings.length > 0) {
+          for (const warning of analysis.warnings) {
+            onProgress(`  ⚠️  ${warning}`);
+          }
+        }
+
+        // Apply suggestion if high confidence
+        if (analysis.confidence >= 0.7) {
+          const musicDir = path.join(workingDir.path, analysis.musicDirectory);
+
+          // Verify directory exists
+          try {
+            const stats = await fs.stat(musicDir);
+            if (stats.isDirectory()) {
+              if (analysis.musicDirectory !== ".") {
+                onProgress(`  ✓ Using music directory: ${analysis.musicDirectory}`);
+                workingDir.path = musicDir;
+                sourceDir = musicDir;
+              } else {
+                onProgress(`  ✓ Using root directory for music`);
+              }
+
+              // Store supplementary file paths for later
+              if (analysis.supplementaryFiles.length > 0) {
+                supplementaryFilePaths = analysis.supplementaryFiles.map((f: string) =>
+                  path.join(extractedRoot, f)
+                );
+                onProgress(`  ✓ Identified ${supplementaryFilePaths.length} supplementary file(s)`);
+              }
+            } else {
+              onProgress(`  ⚠️  Suggested path is not a directory, using root`);
+            }
+          } catch {
+            onProgress(`  ⚠️  Suggested directory doesn't exist, using root`);
+          }
+        } else {
+          onProgress(
+            `  ⚠️  Low confidence (${(analysis.confidence * 100).toFixed(0)}%), using root directory`
+          );
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        onProgress(`  ⚠️  Structure analysis failed: ${msg}`);
+        onProgress(`  Using root directory`);
+      }
+    }
+  }
+
   try {
-    // Step 4: List audio files
+    // Step 7: List audio files
     let audioFiles = await listAudioFiles(workingDir.path, bandConfig.excludePatterns ?? []);
     if (audioFiles.length === 0) {
       throw new Error("No audio files found in archive");
@@ -1095,10 +1185,43 @@ async function processSingleArchive(
     await copyToLibrary(matched, showInfo, bandConfig, targetDir, onProgress);
 
     // Step 11b: Copy non-audio files (artwork, info.txt, etc.)
+    // Collect all supplementary files to copy
+    const allSupplementaryFiles: Array<{ fullPath: string; relativePath: string }> = [];
+
+    // 1. Add LLM-identified supplementary files (if any)
+    if (supplementaryFilePaths.length > 0) {
+      for (const filePath of supplementaryFilePaths) {
+        try {
+          const stats = await fs.stat(filePath);
+          if (stats.isFile()) {
+            allSupplementaryFiles.push({
+              fullPath: filePath,
+              relativePath: path.basename(filePath), // Use just filename in target
+            });
+          }
+        } catch {
+          // Skip files that don't exist or can't be accessed
+        }
+      }
+    }
+
+    // 2. Add non-audio files from music directory
     const nonAudioFiles = await listNonAudioFiles(sourceDir, bandConfig.excludePatterns ?? []);
-    if (nonAudioFiles.length > 0) {
-      onProgress(`\nCopying ${nonAudioFiles.length} supplementary file(s)...`);
-      await copyNonAudioFiles(nonAudioFiles, targetDir, onProgress);
+    allSupplementaryFiles.push(...nonAudioFiles);
+
+    // Remove duplicates based on filename
+    const uniqueFiles = new Map<string, { fullPath: string; relativePath: string }>();
+    for (const file of allSupplementaryFiles) {
+      const key = file.relativePath;
+      if (!uniqueFiles.has(key)) {
+        uniqueFiles.set(key, file);
+      }
+    }
+
+    const filesToCopy = Array.from(uniqueFiles.values());
+    if (filesToCopy.length > 0) {
+      onProgress(`\nCopying ${filesToCopy.length} supplementary file(s)...`);
+      await copyNonAudioFiles(filesToCopy, targetDir, onProgress);
     }
 
     // Step 11c: Generate and write log file
