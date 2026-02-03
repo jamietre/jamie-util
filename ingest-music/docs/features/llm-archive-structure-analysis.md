@@ -1,9 +1,12 @@
-# Feature: LLM-Assisted Archive Structure Analysis
+# Feature: LLM-Assisted Archive Structure Analysis - Phase 1
 
-**Status:** Implemented
+**Status:** Phase 1 Implemented, Phase 2 Planned
 **Created:** 2026-02-02
-**Completed:** 2026-02-02
+**Phase 1 Completed:** 2026-02-02
 **Priority:** High
+
+> **Note:** This is a multi-phase feature. Phase 1 (structure analysis) is complete.
+> See [Phase 2 Plan](llm-archive-structure-analysis-phase2.md) for show information extraction from archives.
 
 ## Problem Statement
 

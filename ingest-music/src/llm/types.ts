@@ -1,6 +1,7 @@
 /** LLM request types */
 export type LLMRequestType =
   | "archive_structure_analysis"
+  | "show_info_extraction"
   | "setlist_mismatch"
   | "date_extraction"
   | "artist_identification"
@@ -149,6 +150,44 @@ export interface ArchiveStructureContext {
   totalAudioFiles: number;
 }
 
+/** Context for show information extraction from archive (Phase 2) */
+export interface ShowInfoExtractionContext {
+  archiveName: string;
+  directoryStructure: string;  // Tree view
+  manifestFiles: Record<string, string>;  // filename → content
+  filenamePatterns: string[];  // All audio filenames
+  showInfoHints?: {  // Hints from structure analysis
+    artist?: string;
+    date?: string;
+    venue?: string;
+    city?: string;
+    state?: string;
+    source: string;
+  };
+}
+
+/** Song in a setlist */
+export interface SetlistSong {
+  title: string;
+  set: number;     // 1 = first set, 2 = second set, 3 = encore
+  position: number;
+}
+
+/** Response from show information extraction (Phase 2) */
+export interface ShowInfoExtractionResult {
+  type: "show_info_extraction";
+  artist?: string;
+  date?: string;  // YYYY-MM-DD format
+  venue?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  setlist?: SetlistSong[];  // If extracted from manifest
+  confidence: number;
+  source: string;  // What provided this info
+  reasoning: string;
+}
+
 /** Response from archive structure analysis */
 export interface ArchiveStructureSuggestion {
   type: "archive_structure_analysis";
@@ -156,6 +195,23 @@ export interface ArchiveStructureSuggestion {
   musicDirectory: string;
   /** Relative paths to supplementary files (info.txt, artwork, etc.) */
   supplementaryFiles: string[];
+  /** Manifest files identified by type (Phase 2) */
+  manifestFiles?: {
+    infoFiles: string[];      // Text files with show info
+    setlistFiles: string[];   // Files that might contain setlists
+    artworkFiles: string[];   // Images, PDFs
+  };
+  /** Show information hints extracted from structure (Phase 2) */
+  showInfoHints?: {
+    artist?: string;
+    date?: string;
+    venue?: string;
+    city?: string;
+    state?: string;
+    source: string;  // e.g., "directory name", "filename pattern"
+  };
+  /** Whether archive appears to contain a complete setlist (Phase 2) */
+  hasCompleteSetlist?: boolean;
   /** Explanation of the analysis */
   reasoning: string;
   /** Confidence score (0-1) */

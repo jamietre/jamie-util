@@ -14,6 +14,7 @@ import type {
   BandConfig,
   AudioInfo,
   SourceFormatInfo,
+  SetlistSong,
 } from "./config/types.js";
 import { loadConfig, resolveBandConfig } from "./config/config.js";
 import { parseZipFilename } from "./matching/parse-filename.js";
@@ -22,7 +23,7 @@ import { extractArchive, listAudioFiles, listNonAudioFiles, cleanupTempDir, isAr
 import { checkForSubdirectories, buildDirectoryTree, formatDirectoryTree, countNodes, countAudioNodes } from "./utils/directory-tree.js";
 import { createLLMService } from "./llm/index.js";
 import { createWebSearchService } from "./websearch/index.js";
-import { ShowIdentificationOrchestrator, FilenameStrategy, AudioFileListStrategy, WebSearchStrategy, presentIdentificationResults } from "./identification/index.js";
+import { ShowIdentificationOrchestrator, ArchiveStructureStrategy, FilenameStrategy, AudioFileListStrategy, WebSearchStrategy, presentIdentificationResults, type ShowIdentificationResult } from "./identification/index.js";
 import { searchSetlistsByCity, searchSetlistsByVenue, type SetlistSearchResult } from "./setlist/search.js";
 import { promptUserToSelectShow } from "./setlist/disambiguation.js";
 import { downloadToTemp } from "./utils/download.js";
@@ -513,31 +514,19 @@ async function processSingleArchive(
     state: flags.state ?? parsed.state ?? "",
   };
 
-  // Prompt for artist if unknown
-  if (showInfo.artist === "Unknown Artist") {
-    onProgress("Artist not determined from filename/path");
+  // Track extracted setlist from identification (Phase 2)
+  let extractedSetlist: SetlistSong[] | undefined;
+  let extractedSetlistConfidence: number | undefined;
 
-    if (!flags.batch && !flags["dry-run"]) {
-      showInfo.artist = await promptForArtist(config);
-      onProgress(`Using artist: ${showInfo.artist}`);
-    } else {
-      throw new Error(
-        "Artist could not be determined. Please specify with --artist flag or include artist in filename."
-      );
-    }
-  }
+  // Step 2: Run identification strategies FIRST if artist, date, or venue unknown
+  // This allows ArchiveStructureStrategy to extract info before prompting user
+  const needsIdentification =
+    showInfo.artist === "Unknown Artist" ||
+    showInfo.date === "Unknown" ||
+    showInfo.date === "" ||
+    !showInfo.venue;
 
-  // Step 2: Resolve band config
-  const bandConfig = resolveBandConfig(config, showInfo.artist);
-
-  // Use the band's display name if specified in config
-  if (bandConfig.name) {
-    showInfo.artist = bandConfig.name;
-  }
-
-  // Step 3: Determine show information using identification system
-  // We need date + artist to fetch setlist
-  if (showInfo.date === "Unknown" || showInfo.date === "" || !showInfo.venue) {
+  if (needsIdentification) {
     onProgress("\nRunning show identification strategies...");
 
     // CLI flags override config.enabled settings
@@ -550,6 +539,12 @@ async function processSingleArchive(
 
     // Create orchestrator and register strategies
     const orchestrator = new ShowIdentificationOrchestrator();
+
+    // Register archive structure strategy first (highest priority) if LLM enabled
+    if (shouldUseLlm && llmService) {
+      orchestrator.registerStrategy(new ArchiveStructureStrategy());
+    }
+
     orchestrator.registerStrategy(new FilenameStrategy());
     orchestrator.registerStrategy(new AudioFileListStrategy());
 
@@ -557,8 +552,6 @@ async function processSingleArchive(
     if (shouldUseWeb && webSearchService) {
       orchestrator.registerStrategy(new WebSearchStrategy());
     }
-
-    // TODO: Add TextFileStrategy, WebSearchLLMStrategy
 
     // Run identification
     const identificationResults = await orchestrator.identifyShow(
@@ -571,14 +564,28 @@ async function processSingleArchive(
     if (identificationResults.length > 0) {
       // Present results to user (or auto-select if high confidence)
       let selectedInfo: Partial<ShowInfo> | undefined;
+      let selectedResult: ShowIdentificationResult | undefined;
 
       if (flags.batch || flags["dry-run"]) {
         // Batch/dry-run: auto-select highest confidence
-        selectedInfo = identificationResults[0].showInfo;
-        onProgress(`Auto-selected (${identificationResults[0].confidence}% confidence): ${identificationResults[0].source}`);
+        selectedResult = identificationResults[0];
+        selectedInfo = selectedResult.showInfo;
+        onProgress(`Auto-selected (${selectedResult.confidence}% confidence): ${selectedResult.source}`);
       } else {
         // Interactive: present options
         selectedInfo = await presentIdentificationResults(identificationResults, zipPath);
+        // Find which result was selected
+        selectedResult = identificationResults.find(r =>
+          r.showInfo.artist === selectedInfo?.artist &&
+          r.showInfo.date === selectedInfo?.date
+        );
+      }
+
+      // Capture extracted setlist from selected result (Phase 2)
+      if (selectedResult?.extractedSetlist && selectedResult.extractedSetlist.length > 0) {
+        extractedSetlist = selectedResult.extractedSetlist;
+        extractedSetlistConfidence = selectedResult.confidence / 100; // Convert from 0-100 to 0-1
+        onProgress(`✓ Extracted setlist from archive (${selectedResult.extractedSetlist.length} songs)`);
       }
 
       // Apply selected info
@@ -595,25 +602,54 @@ async function processSingleArchive(
     } else {
       onProgress("No identification strategies found a match.");
     }
+  }
 
-    // If still unknown, fall back to manual prompt or error
-    if (showInfo.date === "Unknown" || showInfo.date === "") {
-      if (!flags.batch && !flags["dry-run"]) {
-        // Interactive mode - prompt user
-        showInfo.date = await promptForDate();
-        onProgress(`Using date: ${showInfo.date}`);
-      } else {
-        throw new Error(
-          "Show date could not be determined. Please specify with --date flag or include date in filename."
-        );
-      }
+  // Step 3: Prompt for artist if still unknown (after identification)
+  if (showInfo.artist === "Unknown Artist") {
+    onProgress("Artist not determined from filename/path or archive structure");
+
+    if (!flags.batch && !flags["dry-run"]) {
+      showInfo.artist = await promptForArtist(config);
+      onProgress(`Using artist: ${showInfo.artist}`);
+    } else {
+      throw new Error(
+        "Artist could not be determined. Please specify with --artist flag or include artist in filename."
+      );
     }
   }
 
-  // Step 4: Fetch setlist early (now that we have artist + date)
+  // Step 4: Resolve band config
+  const bandConfig = resolveBandConfig(config, showInfo.artist);
+
+  // Use the band's display name if specified in config
+  if (bandConfig.name) {
+    showInfo.artist = bandConfig.name;
+  }
+
+  // Step 5: Prompt for date if still unknown (after identification)
+  if (showInfo.date === "Unknown" || showInfo.date === "") {
+    if (!flags.batch && !flags["dry-run"]) {
+      // Interactive mode - prompt user
+      showInfo.date = await promptForDate();
+      onProgress(`Using date: ${showInfo.date}`);
+    } else {
+      throw new Error(
+        "Show date could not be determined. Please specify with --date flag or include date in filename."
+      );
+    }
+  }
+
+  // Step 6: Fetch setlist early (now that we have artist + date)
   // This gives us complete venue info to show the user
+  // Phase 2: If we have an extracted setlist from archive, pass it to fetchSetlist
   onProgress("\nFetching setlist...");
-  const setlist = await fetchSetlist(showInfo, bandConfig, config);
+  const setlist = await fetchSetlist(
+    showInfo,
+    bandConfig,
+    config,
+    extractedSetlist,
+    extractedSetlistConfidence
+  );
 
   // Update showInfo with venue details from API (more accurate than filename parsing)
   // CLI flags still take precedence

@@ -14,6 +14,8 @@ import type {
   CombinedInstructionsSuggestion,
   ArchiveStructureContext,
   ArchiveStructureSuggestion,
+  ShowInfoExtractionContext,
+  ShowInfoExtractionResult,
 } from "./types.js";
 
 export class LLMService {
@@ -142,9 +144,51 @@ export class LLMService {
       type: "archive_structure_analysis",
       musicDirectory: response.data.musicDirectory || ".",
       supplementaryFiles: response.data.supplementaryFiles || [],
+      manifestFiles: response.data.manifestFiles,
+      showInfoHints: response.data.showInfoHints,
+      hasCompleteSetlist: response.data.hasCompleteSetlist,
       reasoning: response.data.reasoning || response.reasoning,
       confidence: response.data.confidence ?? response.confidence,
       warnings: response.data.warnings,
+    };
+  }
+
+  /**
+   * Extract show information from archive manifest files and structure (Phase 2).
+   * Uses the show-info-extractor logic to combine directory hints with file contents.
+   */
+  async extractShowInfo(
+    context: ShowInfoExtractionContext,
+  ): Promise<ShowInfoExtractionResult> {
+    const prompt = this.buildShowInfoExtractionPrompt(context);
+
+    const response = await this.provider.query<ShowInfoExtractionResult>({
+      type: "show_info_extraction",
+      context,
+      prompt,
+    });
+
+    if (!response.success) {
+      return {
+        type: "show_info_extraction",
+        confidence: 0,
+        source: "extraction failed",
+        reasoning: response.reasoning,
+      };
+    }
+
+    return {
+      type: "show_info_extraction",
+      artist: response.data.artist,
+      date: response.data.date,
+      venue: response.data.venue,
+      city: response.data.city,
+      state: response.data.state,
+      country: response.data.country,
+      setlist: response.data.setlist,
+      confidence: response.data.confidence ?? response.confidence,
+      source: response.data.source || "manifest files",
+      reasoning: response.data.reasoning || response.reasoning,
     };
   }
 
@@ -501,7 +545,7 @@ If you cannot parse the instructions, set confidence to 0 and explain why in rea
    * Build prompt for archive structure analysis
    */
   private buildArchiveStructurePrompt(context: ArchiveStructureContext): string {
-    return `You are analyzing a music archive directory structure to locate audio files and identify relevant supplementary files.
+    return `You are analyzing a music archive directory structure to locate audio files, identify relevant supplementary files, and extract show information.
 
 Archive: ${context.archiveName}
 Total files: ${context.totalFiles}
@@ -512,7 +556,7 @@ Exclude patterns: ${context.excludePatterns.join(", ")}
 Directory structure:
 ${context.directoryTreeText}
 
-TASK:
+TASKS:
 
 1. IDENTIFY MUSIC DIRECTORY:
    Find the directory path that contains the PRIMARY set of music files.
@@ -529,24 +573,71 @@ TASK:
    - Music in /FLAC/ with duplicates in /MP3/ → return "FLAC"
    - Music directly in root → return "."
 
-2. IDENTIFY SUPPLEMENTARY FILES:
-   Find files that should be copied alongside the music:
+2. IDENTIFY MANIFEST FILES BY TYPE:
+   Categorize supplementary files by their purpose:
 
-   Include:
-   - Text files with show information (.txt, .nfo, .md, .info)
-   - Artwork (images: .jpg, .jpeg, .png, .gif, PDFs)
-   - Checksums (.md5, .ffp, .txt with checksums)
-   - Liner notes, credits, recording info
+   Info Files (show description, recording info):
+   - Filenames: *info*, *.nfo, *description*, *notes*, README*, *details*
+   - Examples: "info.txt", "show-info.nfo", "recording-notes.txt", "README.md"
+
+   Setlist Files (track listing, song order):
+   - Filenames: *setlist*, *tracklist*, *songs*, *tracks*
+   - Examples: "setlist.txt", "tracklist.nfo", "songs.txt", "tracks.md"
+
+   Artwork Files (images and documents):
+   - Images: *.jpg, *.jpeg, *.png, *.gif
+   - Documents: *.pdf (posters, handbills)
+
+   Return: Relative paths from archive root, categorized by type
+
+3. EXTRACT SHOW INFORMATION FROM STRUCTURE:
+   Analyze directory and file names for concert show information patterns:
+
+   Look for:
+   - Artist/band name
+   - Date in any format (YYYY-MM-DD, MM-DD-YYYY, YYYYMMDD, etc.)
+   - Venue name
+   - City and state/country
+   - Format indicators: [FLAC24], [SBD], [AUD], [MP3], [24bit], etc.
+
+   Common naming patterns:
+   - "Artist - YYYY-MM-DD - Venue, City, ST/"
+   - "Artist/YYYY/YYYY-MM-DD Venue/"
+   - "Artist-Date-Venue-Source[Format]/"
+   - "archive.org-Artist-Date-Venue/"
+
+   Example: "Trey Anastasio Band - 2025-11-30 - Beacon Theatre, New York, NY [FLAC24]/"
+   Extract: {
+     "artist": "Trey Anastasio Band",
+     "date": "2025-11-30",
+     "venue": "Beacon Theatre",
+     "city": "New York",
+     "state": "NY",
+     "source": "directory name"
+   }
+
+   If no clear information found, omit showInfoHints from response.
+
+4. ASSESS COMPLETENESS:
+   Does this archive appear to contain complete show data?
+   Consider:
+   - Has a file named "*setlist*" or "*tracklist*"?
+   - Directory name contains full show details (artist, date, venue)?
+   - Complete set of tracks (reasonable number, no obvious gaps)?
+
+5. IDENTIFY SUPPLEMENTARY FILES (for backward compatibility):
+   Find all supplementary files that should be copied alongside music:
+   - Text files with show information
+   - Artwork
+   - Checksums
+   - Liner notes, credits
 
    Exclude:
    - System files matching exclude patterns (${context.excludePatterns.join(", ")})
    - Log files from ripping/encoding
-   - Duplicate text files (e.g., same info in multiple locations)
    - Very large files (>10MB for non-image files)
 
-   Return: Array of relative paths from archive root
-
-3. REPORT WARNINGS (if any):
+6. REPORT WARNINGS (if any):
    Detect potential issues:
    - Incomplete sets (missing tracks in sequence)
    - Mixed formats within same set
@@ -562,25 +653,162 @@ Respond with valid JSON only:
     "relative/path/to/info.txt",
     "relative/path/to/artwork.jpg"
   ],
-  "reasoning": "Explanation: Music files are located in X because Y. Found Z supplementary files including...",
+  "manifestFiles": {
+    "infoFiles": ["info.txt", "recording-notes.txt"],
+    "setlistFiles": ["setlist.txt"],
+    "artworkFiles": ["artwork/poster.jpg"]
+  },
+  "showInfoHints": {
+    "artist": "Trey Anastasio Band",
+    "date": "2025-11-30",
+    "venue": "Beacon Theatre",
+    "city": "New York",
+    "state": "NY",
+    "source": "directory name: Trey Anastasio Band - 2025-11-30..."
+  },
+  "hasCompleteSetlist": true,
+  "reasoning": "Explanation: Music files are located in X because Y. Found Z supplementary files. Extracted artist and date from directory name...",
   "confidence": 0.95,
   "warnings": ["Warning 1", "Warning 2"] // Optional, omit if no warnings
 }
 
 EXAMPLES:
 
-Example 1 - Nested sets:
-Directory: phish2024/set1/, phish2024/set2/
-Response: { "musicDirectory": "phish2024", "reasoning": "Music organized in set subdirectories, using parent" }
+Example 1 - Rich archive with metadata:
+Structure: "Phish - 2023-07-14 - Madison Square Garden, NYC [FLAC]/" with "setlist.txt" and "info.txt"
+Response: {
+  "musicDirectory": "Phish - 2023-07-14 - Madison Square Garden, NYC [FLAC]",
+  "showInfoHints": {
+    "artist": "Phish",
+    "date": "2023-07-14",
+    "venue": "Madison Square Garden",
+    "city": "NYC",
+    "source": "directory name"
+  },
+  "hasCompleteSetlist": true,
+  "manifestFiles": {
+    "infoFiles": ["Phish - 2023-07-14 - Madison Square Garden, NYC [FLAC]/info.txt"],
+    "setlistFiles": ["Phish - 2023-07-14 - Madison Square Garden, NYC [FLAC]/setlist.txt"],
+    "artworkFiles": []
+  }
+}
 
-Example 2 - Multiple formats:
-Directory: FLAC/, MP3/
-Response: { "musicDirectory": "FLAC", "reasoning": "Prefer lossless FLAC over lossy MP3" }
+Example 2 - Minimal structure:
+Structure: Flat directory with *.flac files, no metadata files
+Response: {
+  "musicDirectory": ".",
+  "hasCompleteSetlist": false,
+  "manifestFiles": { "infoFiles": [], "setlistFiles": [], "artworkFiles": [] }
+}
 
-Example 3 - Flat structure:
-Directory: *.flac files in root
-Response: { "musicDirectory": ".", "reasoning": "Music files at root level" }
+Example 3 - Nested sets with partial info:
+Structure: "show-2023/" with "set1/", "set2/" subdirectories
+Response: {
+  "musicDirectory": "show-2023",
+  "hasCompleteSetlist": false
+}
 
 Now analyze the directory structure above and respond with JSON:`;
+  }
+
+  /**
+   * Build prompt for show information extraction from archive manifest files (Phase 2).
+   */
+  private buildShowInfoExtractionPrompt(
+    context: ShowInfoExtractionContext,
+  ): string {
+    const parts = [
+      "You are extracting concert show information from music archive files.",
+      "",
+      `Archive: ${context.archiveName}`,
+      "",
+    ];
+
+    // Include structure hints if available
+    if (context.showInfoHints) {
+      parts.push("Directory structure analysis suggests:");
+      if (context.showInfoHints.artist) {
+        parts.push(`  Artist: ${context.showInfoHints.artist}`);
+      }
+      if (context.showInfoHints.date) {
+        parts.push(`  Date: ${context.showInfoHints.date}`);
+      }
+      if (context.showInfoHints.venue) {
+        parts.push(`  Venue: ${context.showInfoHints.venue}`);
+      }
+      if (context.showInfoHints.city) {
+        parts.push(`  City: ${context.showInfoHints.city}`);
+      }
+      if (context.showInfoHints.state) {
+        parts.push(`  State: ${context.showInfoHints.state}`);
+      }
+      parts.push(`  Source: ${context.showInfoHints.source}`);
+      parts.push("");
+    }
+
+    // Include directory structure
+    if (context.directoryStructure) {
+      parts.push("Directory structure:");
+      parts.push(context.directoryStructure);
+      parts.push("");
+    }
+
+    // Include manifest file contents
+    if (Object.keys(context.manifestFiles).length > 0) {
+      parts.push("Manifest file contents:");
+      parts.push("");
+      for (const [filename, content] of Object.entries(context.manifestFiles)) {
+        parts.push(`--- ${filename} ---`);
+        const truncatedContent =
+          content.length > 2000 ? content.slice(0, 2000) + "\n[... truncated]" : content;
+        parts.push(truncatedContent);
+        parts.push("");
+      }
+    }
+
+    // Include filename patterns
+    if (context.filenamePatterns.length > 0) {
+      parts.push("Audio filenames (first 10):");
+      for (const filename of context.filenamePatterns.slice(0, 10)) {
+        parts.push(`  - ${filename}`);
+      }
+      if (context.filenamePatterns.length > 10) {
+        parts.push(`  ... (${context.filenamePatterns.length - 10} more files)`);
+      }
+      parts.push("");
+    }
+
+    parts.push(`TASK:
+
+Extract structured show information by cross-referencing all available sources.
+
+REQUIRED FIELDS:
+- artist: Full artist/band name
+- date: Concert date in YYYY-MM-DD format
+
+OPTIONAL FIELDS:
+- venue, city, state, country
+- setlist: Array of songs if found in manifest
+
+SETLIST FORMAT (if available):
+[
+  { "title": "Song Name", "set": 1, "position": 1 }
+]
+Set numbers: 1 = First set, 2 = Second set, 3 = Encore
+
+RESPONSE FORMAT (JSON only):
+{
+  "artist": "Artist Name",
+  "date": "YYYY-MM-DD",
+  "venue": "Venue Name",
+  "city": "City",
+  "state": "ST",
+  "setlist": [...],
+  "source": "where info was found",
+  "confidence": 0.95,
+  "reasoning": "explanation"
+}`);
+
+    return parts.join("\n");
   }
 }

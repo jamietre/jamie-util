@@ -2,7 +2,7 @@
  * Types for the modular show identification system.
  */
 
-import type { ShowInfo, AudioInfo, Config } from "../config/types.js";
+import type { ShowInfo, AudioInfo, Config, SetlistSong } from "../config/types.js";
 import type { LLMService } from "../llm/service.js";
 import type { WebSearchService } from "../websearch/service.js";
 
@@ -24,6 +24,9 @@ export interface ShowIdentificationResult {
 
   /** Optional: reasoning from LLM if applicable */
   reasoning?: string;
+
+  /** Optional: extracted setlist from archive manifest (Phase 2) */
+  extractedSetlist?: SetlistSong[];
 }
 
 /**

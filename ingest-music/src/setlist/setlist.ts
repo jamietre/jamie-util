@@ -11,12 +11,46 @@ import { logger } from "../utils/logger.js";
 /**
  * Fetch a setlist by trying each configured source in order.
  * Returns the first successful result. Throws if all sources fail.
+ *
+ * Phase 2: If an extracted setlist is provided from archive manifest files
+ * with sufficient confidence, it will be used instead of fetching from APIs.
+ *
+ * @param extractedSetlist - Optional setlist extracted from archive manifest
+ * @param extractedSetlistConfidence - Confidence score (0-1) for extracted setlist
  */
 export async function fetchSetlist(
   showInfo: ShowInfo,
   bandConfig: BandConfig,
   config: Config,
+  extractedSetlist?: SetlistSong[],
+  extractedSetlistConfidence?: number,
 ): Promise<Setlist> {
+  // Phase 2: Use extracted setlist if available and confident
+  if (extractedSetlist && extractedSetlist.length > 0) {
+    const confidence = extractedSetlistConfidence ?? 0;
+    const confidenceThreshold = 0.7; // Require 70% confidence
+
+    if (confidence >= confidenceThreshold) {
+      logger.info(`Using setlist extracted from archive manifest (${(confidence * 100).toFixed(0)}% confidence)`);
+      return {
+        artist: showInfo.artist,
+        date: showInfo.date,
+        venue: showInfo.venue || "Unknown Venue",
+        city: showInfo.city || "Unknown City",
+        state: showInfo.state || "",
+        country: showInfo.country,
+        songs: extractedSetlist,
+        source: "archive-manifest",
+        url: "", // No URL for extracted setlists
+      };
+    } else {
+      logger.info(
+        `Extracted setlist confidence (${(confidence * 100).toFixed(0)}%) below threshold (${(confidenceThreshold * 100).toFixed(0)}%), fetching from API instead`
+      );
+    }
+  }
+
+  // Standard API fetching logic
   const errors: string[] = [];
 
   for (const sourceName of bandConfig.setlistSources) {
