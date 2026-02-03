@@ -6,6 +6,12 @@ import { logger } from "../utils/logger.js";
 
 const DEFAULT_CONFIG: Config = {
   libraryBasePath: "",
+  ignoreFilePatterns: [
+    "^\\._", // macOS resource fork files (AppleDouble format)
+    "^\\.DS_Store$", // macOS folder metadata
+    "^Thumbs\\.db$", // Windows thumbnails
+    "^\\.", // Other hidden files
+  ],
   setlistSources: {},
   defaults: {
     setlistSources: ["setlist.fm"],
@@ -21,12 +27,6 @@ const DEFAULT_CONFIG: Config = {
         compressionLevel: 8,
       },
     },
-    excludePatterns: [
-      "^\\._", // macOS resource fork files (AppleDouble format)
-      "^\\.DS_Store$", // macOS folder metadata
-      "^Thumbs\\.db$", // Windows thumbnails
-      "^\\.", // Other hidden files
-    ],
     keepTags: [
       "COMMENT",
       "DESCRIPTION",
@@ -78,6 +78,7 @@ export function mergeConfig(
 ): Config {
   return {
     libraryBasePath: override.libraryBasePath ?? defaults.libraryBasePath,
+    ignoreFilePatterns: override.ignoreFilePatterns ?? defaults.ignoreFilePatterns,
     downloadDir: override.downloadDir ?? defaults.downloadDir,
     setlistSources: {
       ...defaults.setlistSources,

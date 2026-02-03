@@ -221,12 +221,13 @@ async function preflightValidation(
   zipPath: string,
   setlist: { songs: Array<{ title: string; set: number; position: number }> },
   config: Config,
+  bandConfig: BandConfig,
   flags: CliFlags,
   onProgress: ProgressCallback
 ): Promise<PreflightResult> {
   // Step 1: Scan archive manifest (without extracting)
   onProgress("\nScanning archive contents...");
-  const manifest = await scanArchiveManifest(zipPath);
+  const manifest = await scanArchiveManifest(zipPath, config.ignoreFilePatterns);
 
   if (!manifest) {
     // Archive format doesn't support scanning (e.g., tar.gz, rar)
@@ -346,11 +347,13 @@ async function preflightValidation(
   const hasSplits = suggestion.splits && suggestion.splits.length > 0;
   const hasMerges = suggestion.merges && suggestion.merges.length > 0;
   const fewerFilesNoSolution = audioFileCount < setlistCount && !hasMerges;
+  const countsMatch = audioFileCount === setlistCount;
 
   // Can only proceed automatically if:
-  // 1. LLM has a valid solution (merges, not splits)
-  // 2. High confidence (>= 0.5)
-  const canProceedAutomatically = !hasSplits && !fewerFilesNoSolution && suggestion.confidence >= 0.5;
+  // 1. LLM has a valid solution (merges for MORE_FILES, or counts already match)
+  // 2. No splits suggested
+  // 3. High confidence (>= 0.5)
+  const canProceedAutomatically = (hasMerges || countsMatch) && !hasSplits && !fewerFilesNoSolution && suggestion.confidence >= 0.5;
 
   // Always prompt user if we can't proceed automatically
   const needsUserInput = !canProceedAutomatically;
@@ -361,8 +364,10 @@ async function preflightValidation(
       if (suggestion.splits && suggestion.splits.length > 0) {
         onProgress("\nLLM suggests splitting files, but timestamps cannot be determined automatically.");
         onProgress("You can provide alternative instructions (e.g., remove songs from setlist, merge files instead).");
-      } else {
+      } else if (suggestion.confidence < 0.5) {
         onProgress("\nLLM analysis has low confidence. You can provide manual instructions.");
+      } else {
+        onProgress("\nLLM could not determine how to resolve the mismatch. You can provide manual instructions.");
       }
 
       onProgress("Examples:");
@@ -442,10 +447,18 @@ async function preflightValidation(
       };
     }
 
+    // Determine reason for failure (only reached if batch mode or no user input)
+    let reason: string;
+    if (flags.batch) {
+      reason = `Cannot proceed in batch mode: LLM could not resolve mismatch automatically (${audioFileCount} files vs ${setlistCount} songs).`;
+    } else {
+      reason = `Cannot proceed: No valid instructions provided.`;
+    }
+
     return {
       canProceed: false,
       manifest,
-      reason: `LLM analysis has low confidence (${(suggestion.confidence * 100).toFixed(0)}%). Cannot proceed automatically.`,
+      reason,
     };
   }
 
@@ -651,8 +664,24 @@ async function processSingleArchive(
     extractedSetlistConfidence
   );
 
-  // Update showInfo with venue details from API (more accurate than filename parsing)
+  // Update showInfo with details from API (more accurate than filename parsing or LLM extraction)
   // CLI flags still take precedence
+  // Note: Artist name corrections are handled by setlist transforms (see src/setlist/transforms.ts)
+
+  // Update artist if API provides a different name (transforms have already been applied)
+  if (!flags.artist && setlist.artist && setlist.artist !== showInfo.artist) {
+    onProgress(`✓ Artist refined by API: "${showInfo.artist}" → "${setlist.artist}"`);
+    showInfo.artist = setlist.artist;
+
+    // Re-resolve band config with corrected artist name
+    const correctedBandConfig = resolveBandConfig(config, showInfo.artist);
+    if (correctedBandConfig.name) {
+      showInfo.artist = correctedBandConfig.name;
+    }
+    // Update bandConfig for rest of pipeline
+    Object.assign(bandConfig, correctedBandConfig);
+  }
+
   if (!flags.venue && setlist.venue) {
     showInfo.venue = setlist.venue;
   }
@@ -701,7 +730,7 @@ async function processSingleArchive(
   }
 
   // Step 5: Pre-flight validation (scan archive, check counts, plan merges)
-  const preflight = await preflightValidation(zipPath, setlist, config, flags, onProgress);
+  const preflight = await preflightValidation(zipPath, setlist, config, bandConfig, flags, onProgress);
 
   // Display text files found in archive (for comparison with fetched setlist)
   if (preflight.manifest && Object.keys(preflight.manifest.textFiles).length > 0) {
@@ -784,7 +813,7 @@ async function processSingleArchive(
     // Optimization: Skip LLM if archive has no subdirectories
     const hasSubdirectories = await checkForSubdirectories(
       workingDir.path,
-      bandConfig.excludePatterns ?? []
+      config.ignoreFilePatterns
     );
 
     if (!hasSubdirectories) {
@@ -796,7 +825,7 @@ async function processSingleArchive(
         // Build directory tree
         const directoryTree = await buildDirectoryTree(
           workingDir.path,
-          bandConfig.excludePatterns ?? [],
+          config.ignoreFilePatterns,
           5 // Max depth 5
         );
 
@@ -804,7 +833,7 @@ async function processSingleArchive(
           archiveName: path.basename(zipPath),
           directoryTreeText: formatDirectoryTree(directoryTree, 5),
           audioExtensions: Array.from(getAudioExtensions()),
-          excludePatterns: bandConfig.excludePatterns ?? [],
+          excludePatterns: config.ignoreFilePatterns,
           totalFiles: countNodes(directoryTree, "file"),
           totalAudioFiles: countAudioNodes(directoryTree),
         });
@@ -863,7 +892,7 @@ async function processSingleArchive(
 
   try {
     // Step 7: List audio files
-    let audioFiles = await listAudioFiles(workingDir.path, bandConfig.excludePatterns ?? []);
+    let audioFiles = await listAudioFiles(workingDir.path, config.ignoreFilePatterns);
     if (audioFiles.length === 0) {
       throw new Error("No audio files found in archive");
     }
@@ -1171,7 +1200,7 @@ async function processSingleArchive(
 
     if (flags["dry-run"]) {
       onProgress("\n--- DRY RUN ---");
-      const nonAudioFiles = await listNonAudioFiles(sourceDir, bandConfig.excludePatterns ?? []);
+      const nonAudioFiles = await listNonAudioFiles(sourceDir, config.ignoreFilePatterns);
       printTagsSummary(matched, showInfo, bandConfig, onProgress);
       printDryRun(matched, showInfo, bandConfig, targetDir, nonAudioFiles, onProgress);
       return {
@@ -1242,7 +1271,7 @@ async function processSingleArchive(
     }
 
     // 2. Add non-audio files from music directory
-    const nonAudioFiles = await listNonAudioFiles(sourceDir, bandConfig.excludePatterns ?? []);
+    const nonAudioFiles = await listNonAudioFiles(sourceDir, config.ignoreFilePatterns);
     allSupplementaryFiles.push(...nonAudioFiles);
 
     // Remove duplicates based on filename

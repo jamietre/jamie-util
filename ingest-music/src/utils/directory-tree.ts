@@ -15,16 +15,17 @@ export interface DirectoryNode {
 }
 
 /**
- * Check if a file should be excluded based on patterns.
+ * Check if a file should be excluded based on regex patterns.
  */
 function shouldExclude(name: string, excludePatterns: string[]): boolean {
   return excludePatterns.some((pattern) => {
-    // Simple glob-like matching: supports * wildcard
-    const regexPattern = pattern
-      .replace(/[.+?^${}()|[\]\\]/g, "\\$&") // Escape special chars
-      .replace(/\*/g, ".*"); // Convert * to .*
-    const regex = new RegExp(`^${regexPattern}$`, "i");
-    return regex.test(name);
+    try {
+      const regex = new RegExp(pattern);
+      return regex.test(name);
+    } catch (e) {
+      console.warn(`Invalid exclude pattern: ${pattern}`);
+      return false;
+    }
   });
 }
 

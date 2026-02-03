@@ -287,24 +287,40 @@ This means some files are intro/banter/talking tracks that need to be MERGED wit
 
 STEP-BY-STEP PROCESS:
 
-1. IDENTIFY NON-SONG TRACKS:
-   Look for tracks with titles containing: "Intro", "Banter", "Talking", "DJ", "Outro", "Announcement"
-   These tracks are NOT in the setlist - they are filler content between songs.
-   You MUST identify ALL ${fileDiff} of them.
+1. IDENTIFY NON-SONG TRACKS (CASE-INSENSITIVE MATCHING):
+   Carefully examine EACH audio file title for these keywords (matches can appear ANYWHERE in the title):
+   - "intro" (e.g., "Guitar Intro", "DJ Intro", "Intro Music", "01 Intro")
+   - "banter" (e.g., "Band Banter", "Banter #1")
+   - "talking" (e.g., "Talking Between Songs")
+   - "tuning" (e.g., "Guitar Tuning", "Tuning Break")
+   - "soundcheck" (e.g., "Soundcheck Jam")
+   - "announcement" (e.g., "DJ Announcement")
+   - "outro" (e.g., "Show Outro")
+
+   EXAMPLES OF INTRO TRACKS THAT MUST BE IDENTIFIED:
+   - "04_Guitar Intro.mp3" ← Contains "Intro", merge with track 5
+   - "01 Intro.flac" ← Contains "Intro", merge with track 2
+   - "23_DJ_Intro_to_Encore.mp3" ← Contains "Intro", merge with track 24
+
+   These tracks are NOT in the official setlist - they are filler content.
+   You MUST identify ALL ${fileDiff} of them by checking each filename carefully.
 
 2. MERGE EVERY NON-SONG TRACK:
-   - Each intro/banter track must merge with the NEXT track
+   - Each intro/banter track must merge with the NEXT track (intro + next = one song)
    - If multiple intro/banter tracks are consecutive, they ALL merge with the next song
-   - Example: Track 1 "DJ Intro" → merge [1, 2]
-   - Example: Track 10 "Banter #1" → merge [10, 11]
-   - IMPORTANT: Each merge is TWO tracks only: [intro_track, next_track]
+   - EXAMPLES:
+     * Track 1 "DJ Intro" → suggest merge [1, 2] (intro merges into track 2)
+     * Track 4 "Guitar Intro" → suggest merge [4, 5] (intro merges into track 5)
+     * Track 10 "Banter #1" → suggest merge [10, 11] (banter merges into track 11)
+   - IMPORTANT: Each merge is TWO tracks only: [intro_track_number, next_track_number]
    - DO NOT create duplicate merges for the same track numbers
    - After merging all ${fileDiff} intro/banter tracks, you'll have ${context.setlistCount} songs
 
 3. VERIFY YOUR WORK:
    - Count: You should suggest exactly ${fileDiff} unique merges
    - Check: No duplicate track numbers in your merge list
-   - Math: ${context.fileCount} files - ${fileDiff} merges = ${context.setlistCount} songs ✓`
+   - Math: ${context.fileCount} files - ${fileDiff} merges = ${context.setlistCount} songs ✓
+   - Double-check: Did you identify ALL intro/banter keywords in the filenames?`
     : scenario === "FEWER_FILES"
       ? `
 You have ${Math.abs(fileDiff)} FEWER audio files than setlist songs (${context.fileCount} < ${context.setlistCount}).

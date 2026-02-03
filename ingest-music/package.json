@@ -4,7 +4,7 @@
   "description": "Process concert recording zip archives into an organized, tagged music library",
   "type": "module",
   "scripts": {
-    "cli": "tsx src/index.ts",
+    "cli": "NODE_OPTIONS='--max-old-space-size=4096' tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

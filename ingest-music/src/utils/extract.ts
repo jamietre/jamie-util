@@ -119,7 +119,12 @@ async function extractZip(
   destDir: string,
   onProgress?: ProgressCallback,
 ): Promise<void> {
-  const zipFile = await open(archivePath);
+  // Open with lazyEntries: false (default) for better memory efficiency
+  const zipFile = await open(archivePath, {
+    validateEntrySizes: false, // Skip validation to reduce memory
+    decodeStrings: true
+  });
+
   try {
     for await (const entry of zipFile) {
       if (entry.filename.endsWith("/")) continue;
@@ -383,15 +388,18 @@ export async function readTextFiles(dir: string): Promise<Record<string, string>
  *
  * Currently only supports ZIP files and directories.
  * For other formats, returns null (caller should extract first).
+ *
+ * @param excludePatterns - Glob patterns to exclude (e.g., ["^\\._", "^\\.DS_Store$"])
  */
 export async function scanArchiveManifest(
-  inputPath: string
+  inputPath: string,
+  excludePatterns: string[] = []
 ): Promise<ArchiveManifest | null> {
   const stats = await fs.stat(inputPath);
 
   // Handle directory
   if (stats.isDirectory()) {
-    const audioFiles = await listAudioFiles(inputPath);
+    const audioFiles = await listAudioFiles(inputPath, excludePatterns);
     const textFiles = await readTextFiles(inputPath);
 
     return {
@@ -405,7 +413,7 @@ export async function scanArchiveManifest(
   const format = detectArchiveFormat(inputPath);
 
   if (format === "zip") {
-    return await scanZipManifest(inputPath);
+    return await scanZipManifest(inputPath, excludePatterns);
   }
 
   // Other formats (tar.gz, rar) not yet supported for scanning
@@ -413,9 +421,28 @@ export async function scanArchiveManifest(
 }
 
 /**
+ * Check if a file should be excluded based on regex patterns.
+ * Uses same logic as shouldExcludeFile for consistency.
+ */
+function shouldExclude(name: string, excludePatterns: string[]): boolean {
+  return excludePatterns.some((pattern) => {
+    try {
+      const regex = new RegExp(pattern);
+      return regex.test(name);
+    } catch (e) {
+      console.warn(`Invalid exclude pattern: ${pattern}`);
+      return false;
+    }
+  });
+}
+
+/**
  * Scan a ZIP archive without extracting.
  */
-async function scanZipManifest(archivePath: string): Promise<ArchiveManifest> {
+async function scanZipManifest(
+  archivePath: string,
+  excludePatterns: string[] = []
+): Promise<ArchiveManifest> {
   const audioFiles: string[] = [];
   const textFiles: Record<string, string> = {};
   let totalFiles = 0;
@@ -429,8 +456,14 @@ async function scanZipManifest(archivePath: string): Promise<ArchiveManifest> {
       // Skip directories
       if (entry.filename.endsWith("/")) continue;
 
-      totalFiles++;
       const basename = path.basename(entry.filename);
+
+      // Skip excluded files (e.g., ._ files, .DS_Store)
+      if (shouldExclude(basename, excludePatterns)) {
+        continue;
+      }
+
+      totalFiles++;
       const ext = path.extname(basename).toLowerCase();
 
       // Check if audio file

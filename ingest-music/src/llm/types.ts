@@ -145,7 +145,7 @@ export interface ArchiveStructureContext {
   archiveName: string;
   directoryTreeText: string; // Formatted tree for display
   audioExtensions: string[]; // [".flac", ".mp3", etc.]
-  excludePatterns: string[]; // From band config
+  excludePatterns: string[]; // From config.ignoreFilePatterns
   totalFiles: number;
   totalAudioFiles: number;
 }

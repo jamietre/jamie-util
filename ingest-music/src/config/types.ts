@@ -68,8 +68,6 @@ export interface BandConfig {
   fileNameTemplateSingleSet?: string; // Optional template for single-set shows
   encoreInSet2: boolean;
   conversion?: ConversionConfig;
-  /** Regex patterns for files to exclude (e.g., macOS resource forks, system files) */
-  excludePatterns?: string[];
   /** Tag names to preserve from original files (e.g., ["COMMENT", "ENCODER", "REPLAYGAIN_*"]) */
   keepTags?: string[];
 }
@@ -78,6 +76,8 @@ export interface BandConfig {
 export interface Config {
   libraryBasePath: string;
   downloadDir?: string; // Optional directory for downloaded files (defaults to OS temp)
+  /** Global patterns for files to ignore (e.g., macOS resource forks, system files) */
+  ignoreFilePatterns: string[];
   setlistSources: Record<string, SetlistSourceConfig>;
   llm?: LLMConfig; // Optional LLM configuration
   webSearch?: WebSearchConfig; // Optional web search configuration

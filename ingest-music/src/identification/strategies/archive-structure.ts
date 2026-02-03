@@ -80,7 +80,7 @@ export class ArchiveStructureStrategy implements ShowIdentificationStrategy {
       context.extractedDir,
       structureAnalysis.musicDirectory,
     );
-    const directoryTree = await buildDirectoryTree(musicDir, [], 3);
+    const directoryTree = await buildDirectoryTree(musicDir, context.config.ignoreFilePatterns, 3);
     const audioFilePaths = findAudioFiles(directoryTree);
     const filenamePatterns = audioFilePaths.map((p) => path.basename(p));
 
@@ -176,7 +176,7 @@ export class ArchiveStructureStrategy implements ShowIdentificationStrategy {
       archiveName: context.filename,
       directoryTreeText: formatDirectoryTree(directoryTree, 5),
       audioExtensions,
-      excludePatterns: [],
+      excludePatterns: context.config.ignoreFilePatterns,
       totalFiles: this.countFiles(directoryTree),
       totalAudioFiles: this.countAudioFiles(directoryTree),
     });

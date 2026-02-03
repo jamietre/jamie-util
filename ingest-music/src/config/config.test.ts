@@ -4,6 +4,7 @@ import type { Config } from "./types.js";
 
 const baseConfig: Config = {
   libraryBasePath: "/music",
+  ignoreFilePatterns: ["^\\."],
   setlistSources: {
     "setlist.fm": { apiKey: "default-key" },
   },

@@ -7,15 +7,16 @@ import type {
   SetlistSourceConfig,
 } from "../config/types.js";
 import { logger } from "../utils/logger.js";
+import { applyTransforms } from "./transforms.js";
 
 /**
  * Fetch a setlist by trying each configured source in order.
  * Returns the first successful result. Throws if all sources fail.
  *
- * Phase 2: If an extracted setlist is provided from archive manifest files
- * with sufficient confidence, it will be used instead of fetching from APIs.
+ * Phase 2: Always tries API sources first to get authoritative artist names
+ * and setlist data. Falls back to extracted setlist only if API fails.
  *
- * @param extractedSetlist - Optional setlist extracted from archive manifest
+ * @param extractedSetlist - Optional setlist extracted from archive manifest (used as fallback)
  * @param extractedSetlistConfidence - Confidence score (0-1) for extracted setlist
  */
 export async function fetchSetlist(
@@ -25,32 +26,7 @@ export async function fetchSetlist(
   extractedSetlist?: SetlistSong[],
   extractedSetlistConfidence?: number,
 ): Promise<Setlist> {
-  // Phase 2: Use extracted setlist if available and confident
-  if (extractedSetlist && extractedSetlist.length > 0) {
-    const confidence = extractedSetlistConfidence ?? 0;
-    const confidenceThreshold = 0.7; // Require 70% confidence
-
-    if (confidence >= confidenceThreshold) {
-      logger.info(`Using setlist extracted from archive manifest (${(confidence * 100).toFixed(0)}% confidence)`);
-      return {
-        artist: showInfo.artist,
-        date: showInfo.date,
-        venue: showInfo.venue || "Unknown Venue",
-        city: showInfo.city || "Unknown City",
-        state: showInfo.state || "",
-        country: showInfo.country,
-        songs: extractedSetlist,
-        source: "archive-manifest",
-        url: "", // No URL for extracted setlists
-      };
-    } else {
-      logger.info(
-        `Extracted setlist confidence (${(confidence * 100).toFixed(0)}%) below threshold (${(confidenceThreshold * 100).toFixed(0)}%), fetching from API instead`
-      );
-    }
-  }
-
-  // Standard API fetching logic
+  // Always try API sources first to get authoritative data
   const errors: string[] = [];
 
   for (const sourceName of bandConfig.setlistSources) {
@@ -73,6 +49,33 @@ export async function fetchSetlist(
     } catch (e) {
       errors.push(
         `${sourceName}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  // Phase 2: If all API sources failed, fall back to extracted setlist
+  if (extractedSetlist && extractedSetlist.length > 0) {
+    const confidence = extractedSetlistConfidence ?? 0;
+    const confidenceThreshold = 0.6; // Lower threshold for fallback (60%)
+
+    if (confidence >= confidenceThreshold) {
+      logger.info(
+        `All API sources failed. Using extracted setlist as fallback (${(confidence * 100).toFixed(0)}% confidence)`
+      );
+      return {
+        artist: showInfo.artist,
+        date: showInfo.date,
+        venue: showInfo.venue || "Unknown Venue",
+        city: showInfo.city || "Unknown City",
+        state: showInfo.state || "",
+        country: showInfo.country,
+        songs: extractedSetlist,
+        source: "archive-manifest (fallback)",
+        url: "",
+      };
+    } else {
+      errors.push(
+        `archive-manifest: confidence too low (${(confidence * 100).toFixed(0)}% < ${(confidenceThreshold * 100).toFixed(0)}%)`
       );
     }
   }
@@ -134,7 +137,11 @@ async function fetchPhishNet(
     throw new Error(`No setlist data found for show ${show.showid}`);
   }
 
-  return parsePhishNetSetlistResponse(show, setlistData.data, showInfo);
+  // Parse to normalized format
+  const setlist = parsePhishNetSetlistResponse(show, setlistData.data, showInfo);
+
+  // Apply transforms (e.g., TAB detection)
+  return applyTransforms(setlist, "phish.net", show);
 }
 
 /**
@@ -158,7 +165,11 @@ async function fetchKGLW(
     throw new Error(`No setlist found for ${showInfo.date}`);
   }
 
-  return parseKGLWResponse(data, showInfo);
+  // Parse to normalized format
+  const setlist = parseKGLWResponse(data, showInfo);
+
+  // Apply transforms (none currently apply to kglw.net, but keep for consistency)
+  return applyTransforms(setlist, "kglw.net", data);
 }
 
 /**
@@ -202,7 +213,11 @@ async function fetchSetlistFm(
     );
   }
 
-  return parseSetlistFmResponse(data.setlist[0], showInfo);
+  // Parse to normalized format
+  const setlist = parseSetlistFmResponse(data.setlist[0], showInfo);
+
+  // Apply transforms (e.g., TAB detection)
+  return applyTransforms(setlist, "setlist.fm", data.setlist[0]);
 }
 
 // --- phish.net types and parsing ---
