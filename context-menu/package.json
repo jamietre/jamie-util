@@ -1,0 +1,23 @@
+{
+  "name": "@jamie-util/context-menu",
+  "version": "1.0.0",
+  "description": "CLI tool for managing Windows Explorer context menu items",
+  "type": "module",
+  "bin": {
+    "context-menu": "./index.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "windows",
+    "explorer",
+    "context-menu",
+    "registry"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "commander": "^12.1.0"
+  }
+}

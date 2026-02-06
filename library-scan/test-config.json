@@ -1,0 +1,19 @@
+{
+  "targets": [
+    {
+      "path": "./test-data",
+      "maxDepth": 100,
+      "filters": {
+        "exclude": ["**/node_modules/**", "**/.git/**"]
+      }
+    }
+  ],
+  "hooks": [
+    {
+      "name": "priority-detection",
+      "enabled": true
+    }
+  ],
+  "debug": true,
+  "dryRun": true
+}

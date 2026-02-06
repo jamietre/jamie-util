@@ -1,0 +1,22 @@
+{
+  "sources": [
+    "/c/mount/network/media2",
+    "/c/mount/network/media3"
+  ],
+  "targets": ["u:\\"],
+  "output": {
+    "format": "text",
+    "showSourcesOnly": true,
+    "showTargetOnly": true,
+    "outputFile": null
+  },
+  "pathNormalization": {
+    "segmentsToKeep": 2
+  },
+  "filters": {
+    "extensions": [],
+    "minSizeBytes": 0,
+    "maxSizeBytes": null,
+    "excludeDirs": []
+  }
+}
