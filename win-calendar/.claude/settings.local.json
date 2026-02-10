@@ -4,7 +4,13 @@
       "WebSearch",
       "Bash(dotnet build:*)",
       "Bash(taskkill:*)",
-      "Bash(start WinCalendar.exe)"
+      "Bash(start WinCalendar.exe)",
+      "Bash(schtasks:*)",
+      "Bash(cmd //c 'schtasks /query /v /fo LIST')",
+      "Bash(reg query \"HKCU\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run\")",
+      "Bash(powershell -Command \"$sh = New-Object -ComObject WScript.Shell; $sc = $sh.CreateShortcut\\(''C:\\\\Users\\\\j.treworgy\\\\AppData\\\\Roaming\\\\Microsoft\\\\Windows\\\\Start Menu\\\\Programs\\\\Startup\\\\MeetingReminder.lnk''\\); Write-Host ''Target:'' $sc.TargetPath; Write-Host ''Arguments:'' $sc.Arguments; Write-Host ''WorkingDir:'' $sc.WorkingDirectory\")",
+      "Bash(powershell -File:*)",
+      "Bash(powershell -NoProfile -Command:*)"
     ]
   }
 }

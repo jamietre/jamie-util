@@ -17,6 +17,8 @@ Private Declare PtrSafe Function SetTimer Lib "user32" (ByVal hwnd As LongPtr, B
 Private Declare PtrSafe Function KillTimer Lib "user32" (ByVal hwnd As LongPtr, ByVal nIDEvent As LongPtr) As Long
 Private Declare PtrSafe Function GetSystemMetrics Lib "user32" (ByVal nIndex As Long) As Long
 Private gTimerID As LongPtr
+Private pNotifyForm As Object
+Private pNotifyTimerId As LongPtr
 
 ' === START THE TIMER ===
 Public Sub StartCalendarExport()
@@ -46,9 +48,6 @@ Public Sub StopCalendarExport()
 End Sub
 
 ' === SHOW STATUS (non-blocking, auto-dismiss) ===
-Private pNotifyForm As Object
-Private pNotifyTimerId As LongPtr
-
 Private Sub ShowStatus(ByVal message As String)
     On Error Resume Next
 
