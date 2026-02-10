@@ -35,9 +35,10 @@ public class TrayApplicationContext : ApplicationContext
     {
         _reminderService = new ReminderService();
 
-        // Capture initial calendar source states
-        _initialCalendarSourceStates = AppConfig.Instance.CalendarSources
-            .ToDictionary(s => s.DisplayName, s => s.Enabled);
+        // Capture initial calendar source states (use indexer to handle duplicate display names)
+        _initialCalendarSourceStates = new Dictionary<string, bool>();
+        foreach (var s in AppConfig.Instance.CalendarSources)
+            _initialCalendarSourceStates[s.DisplayName] = s.Enabled;
 
         // Create context menu
         _contextMenu = new ContextMenuStrip();
@@ -1031,8 +1032,8 @@ public class TrayApplicationContext : ApplicationContext
         {
             var startInfo = new System.Diagnostics.ProcessStartInfo
             {
-                FileName = "cmd.exe",
-                Arguments = $"/c timeout /t 1 /nobreak >nul && \"{exePath}\"",
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -Command \"Start-Sleep -Seconds 3; Start-Process '{exePath}'\"",
                 WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
                 CreateNoWindow = true
             };

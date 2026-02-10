@@ -20,7 +20,6 @@ Private gTimerID As LongPtr
 Private pNotifyForm As Object
 Private pNotifyTimerId As LongPtr
 
-
 ' === START THE TIMER ===
 Public Sub StartCalendarExport()
     If gTimerID <> 0 Then
@@ -49,7 +48,6 @@ Public Sub StopCalendarExport()
 End Sub
 
 ' === SHOW STATUS (non-blocking, auto-dismiss) ===
-
 Private Sub ShowStatus(ByVal message As String)
     On Error Resume Next
 
