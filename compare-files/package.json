@@ -1,0 +1,26 @@
+{
+  "name": "compare-files",
+  "version": "1.0.0",
+  "description": "Compare file lists between directories with bidirectional diff",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "cli": "tsx src/index.ts",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "keywords": ["file", "compare", "diff", "directories"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@stricli/core": "^1.2.5",
+    "chalk": "^5.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}
