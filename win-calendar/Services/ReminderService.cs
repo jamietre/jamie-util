@@ -2,7 +2,11 @@ using Microsoft.Toolkit.Uwp.Notifications;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace WinCalendar;
+namespace WinCalendar.Services;
+
+using WinCalendar.Models;
+using WinCalendar.Sources;
+using WinCalendar.UI;
 
 public class ReminderService
 {
@@ -547,48 +551,4 @@ public class ReminderService
         var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(_stateFile, json);
     }
-}
-
-public record ReminderStage(int MinutesBefore, int SnoozeMinutes, bool IsOverdue, bool IsFinal);
-
-public class Meeting
-{
-    public string Subject { get; set; } = "";
-    public DateTime Start { get; set; }
-    public DateTime End { get; set; }
-    public string? Location { get; set; }
-    public string? EntryId { get; set; }
-    public string? Organizer { get; set; }
-    public int RequiredAttendees { get; set; }
-    public int OptionalAttendees { get; set; }
-    public int TotalAttendees => RequiredAttendees + OptionalAttendees;
-    public double MinutesUntilStart { get; set; }
-    public string? Source { get; set; }
-}
-
-public class CalendarData
-{
-    public string? ExportTime { get; set; }
-    public List<CalendarEvent>? Events { get; set; }
-}
-
-public class CalendarEvent
-{
-    public string? Subject { get; set; }
-    public string? Start { get; set; }
-    public string? End { get; set; }
-    public string? Location { get; set; }
-    public string? EntryId { get; set; }
-    public string? Organizer { get; set; }
-    public int RequiredAttendees { get; set; }
-    public int OptionalAttendees { get; set; }
-}
-
-public class ReminderState
-{
-    public Dictionary<string, int> MeetingStages { get; set; } = new();
-    public Dictionary<string, bool> SkipToStart { get; set; } = new();
-    public Dictionary<string, bool> Dismissed { get; set; } = new();
-    public Dictionary<string, string> SnoozeUntil { get; set; } = new();
-    public Dictionary<string, bool> Hidden { get; set; } = new();
 }

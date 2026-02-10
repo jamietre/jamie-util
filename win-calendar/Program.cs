@@ -1,5 +1,5 @@
-using WinCalendar;
 using System.Runtime.InteropServices;
+using WinCalendar.UI;
 
 // Set AppUserModelID for consistent taskbar/notification identity across builds
 [DllImport("shell32.dll", SetLastError = true)]

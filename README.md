@@ -2,16 +2,20 @@
 
 ## What is this
 
-Largely AI-built tools to automate some things I do. 
+Largely AI-built tools to automate some things I do.
 
 - [Photo Sync](./photo-sync/README.md) - synchronize my android phone's photos to a local archive, organized by date
 - [WinCalendar](./win-calendar/README.md) - a calendar & reminder that has persistent notifications that can break through hyperfocus and a simple UX for upcoming meetings; connects with google & outlook
 
+## TODO
+
+[ ] Post tool hooks for code quality, e.g. https://github.com/bartolli/claude-code-typescript-hooks?tab=readme-ov-file
+
 ## What platform is this for
 
-Should work on anything that can run node.js. I'm running this on Ubuntu in WSL2 on windows, but can't think why it wouldn't work on anything else. 
+Should work on anything that can run node.js. I'm running this on Ubuntu in WSL2 on windows, but can't think why it wouldn't work on anything else.
 
-## What state is it in 
+## What state is it in
 
 It's in the "works for me" state. I add features and fix bugs almost every time I use it.
 
@@ -30,6 +34,3 @@ Probably not
 ## Will anything here be released/published
 
 Unlikely. What's the point when AI can build something tailored to you so easily?
-
-
-
