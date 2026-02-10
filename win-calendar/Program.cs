@@ -1,4 +1,11 @@
 using WinCalendar;
+using System.Runtime.InteropServices;
+
+// Set AppUserModelID for consistent taskbar/notification identity across builds
+[DllImport("shell32.dll", SetLastError = true)]
+static extern int SetCurrentProcessExplicitAppUserModelID([MarshalAs(UnmanagedType.LPWStr)] string AppID);
+
+SetCurrentProcessExplicitAppUserModelID("com.treworgy.WinCalendar");
 
 // Ensure single instance
 using var mutex = new Mutex(true, "WinCalendarApp", out bool createdNew);
