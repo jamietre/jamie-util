@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "WebSearch",
-      "WebFetch(domain:help.synology.com)",
-      "WebFetch(domain:github.com)"
-    ]
-  }
-}
