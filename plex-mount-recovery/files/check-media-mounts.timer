@@ -1,0 +1,14 @@
+[Unit]
+Description=Periodic check for media mounts
+
+[Timer]
+# Run 2 minutes after boot
+OnBootSec=2min
+# Retry every 30 seconds after the service fails (becomes inactive)
+# Once the service succeeds, RemainAfterExit=yes keeps it active,
+# so this timer stops firing automatically.
+OnUnitInactiveSec=30s
+Unit=check-media-mounts.service
+
+[Install]
+WantedBy=timers.target
