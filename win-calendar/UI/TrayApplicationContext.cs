@@ -24,7 +24,7 @@ public class DoubleBufferedForm : Form
 
 public class TrayApplicationContext : ApplicationContext
 {
-    private const string Version = "1.1.1";
+    private const string Version = "1.2.0";
 
     private readonly NotifyIcon _trayIcon;
     private readonly System.Windows.Forms.Timer _timer;
@@ -307,15 +307,84 @@ public class TrayApplicationContext : ApplicationContext
             Dock = DockStyle.Fill,
             Font = new Font(SystemFonts.DefaultFont.FontFamily, 11, FontStyle.Bold),
             Padding = new Point(20, 6),
-            ItemSize = new Size(120, 32),
+            ItemSize = new Size(85, 32),
             SizeMode = TabSizeMode.Fixed,
-            Appearance = TabAppearance.Buttons
+            Appearance = TabAppearance.Buttons,
+            DrawMode = TabDrawMode.OwnerDrawFixed
         };
 
-        var todayTab = new TabPage("Today");
-        var nextBusinessDayTab = new TabPage(GetNextBusinessDayLabel(DateTime.Today));
-        tabControl.TabPages.Add(todayTab);
-        tabControl.TabPages.Add(nextBusinessDayTab);
+        // Get Monday of current week
+        var today = DateTime.Today;
+        var monday = today.AddDays(-(int)today.DayOfWeek + (int)DayOfWeek.Monday);
+        if (today.DayOfWeek == DayOfWeek.Sunday)
+        {
+            monday = monday.AddDays(-7); // If today is Sunday, go to previous Monday
+        }
+
+        // Create tabs for each day of the week
+        var weekTabs = new List<(TabPage tab, DateTime date)>();
+        for (int i = 0; i < 7; i++)
+        {
+            var date = monday.AddDays(i);
+            var dayName = date.DayOfWeek.ToString().Substring(0, 3); // Mon, Tue, etc.
+
+            var tab = new TabPage(dayName);
+
+            // Gray out weekend tabs
+            var isWeekend = date.DayOfWeek == DayOfWeek.Saturday || date.DayOfWeek == DayOfWeek.Sunday;
+            if (isWeekend)
+            {
+                tab.BackColor = Color.FromArgb(240, 240, 240);
+            }
+
+            tabControl.TabPages.Add(tab);
+            weekTabs.Add((tab, date));
+        }
+
+        // Custom draw tabs to highlight today with green background and lighter text for other days
+        tabControl.DrawItem += (s, e) =>
+        {
+            var tab = tabControl.TabPages[e.Index];
+            var isToday = weekTabs[e.Index].date.Date == DateTime.Today;
+            var isWeekend = weekTabs[e.Index].date.DayOfWeek == DayOfWeek.Saturday ||
+                           weekTabs[e.Index].date.DayOfWeek == DayOfWeek.Sunday;
+
+            // Draw background
+            var backColor = isToday ? Color.FromArgb(60, 179, 113) : // Medium sea green for today
+                           isWeekend ? Color.FromArgb(240, 240, 240) : // Light gray for weekends
+                           SystemColors.Control; // Default for other days
+
+            using (var brush = new SolidBrush(backColor))
+            {
+                e.Graphics.FillRectangle(brush, e.Bounds);
+            }
+
+            // Draw text
+            var textColor = isToday ? Color.White : // White text for today
+                           Color.FromArgb(128, 128, 128); // Gray text for other days
+
+            var textFont = new Font(tabControl.Font.FontFamily, tabControl.Font.Size,
+                                   isToday ? FontStyle.Bold : FontStyle.Regular);
+
+            using (var textBrush = new SolidBrush(textColor))
+            {
+                var sf = new StringFormat
+                {
+                    Alignment = StringAlignment.Center,
+                    LineAlignment = StringAlignment.Center
+                };
+                e.Graphics.DrawString(tab.Text, textFont, textBrush, e.Bounds, sf);
+            }
+
+            textFont.Dispose();
+        };
+
+        // Select today's tab by default
+        var todayIndex = weekTabs.FindIndex(t => t.date.Date == today);
+        if (todayIndex >= 0)
+        {
+            tabControl.SelectedIndex = todayIndex;
+        }
 
         // Add controls in docking order: TabControl, RestartLabel, MenuStrip (WinForms docks in reverse order)
         form.Controls.Add(tabControl);
@@ -328,14 +397,22 @@ public class TrayApplicationContext : ApplicationContext
             tabControl.SuspendLayout();
             try
             {
-                BuildMeetingsPanel(todayTab, DateTime.Today, config, formWidth - 50);
-                BuildMeetingsPanel(nextBusinessDayTab, GetNextBusinessDay(DateTime.Today), config, formWidth - 50);
+                foreach (var (tab, date) in weekTabs)
+                {
+                    BuildMeetingsPanel(tab, date, config, formWidth - 50);
+                }
             }
             finally
             {
                 tabControl.ResumeLayout();
                 form.ResumeLayout();
             }
+        }
+
+        void UpdateTabLabels()
+        {
+            // Tab labels don't change (always show day name), but trigger redraw to update colors
+            tabControl.Invalidate();
         }
 
         int MeasureTabContentHeight(TabPage tab)
@@ -354,12 +431,17 @@ public class TrayApplicationContext : ApplicationContext
 
         void ResizeFormToFit()
         {
-            // Measure actual rendered content
-            var todayHeight = MeasureTabContentHeight(todayTab);
-            var nextDayHeight = MeasureTabContentHeight(nextBusinessDayTab);
-            var contentHeight = Math.Max(todayHeight, nextDayHeight);
+            // Measure actual rendered content from all tabs
             var maxHeight = (int)(Screen.PrimaryScreen!.WorkingArea.Height * 0.8);
-            var newHeight = Math.Min(contentHeight + chromeHeight, maxHeight);
+            var maxContentHeight = 150;
+
+            foreach (var (tab, _) in weekTabs)
+            {
+                var height = MeasureTabContentHeight(tab);
+                maxContentHeight = Math.Max(maxContentHeight, height);
+            }
+
+            var newHeight = Math.Min(maxContentHeight + chromeHeight, maxHeight);
             form.ClientSize = new Size(formWidth, newHeight);
         }
 
@@ -418,10 +500,7 @@ public class TrayApplicationContext : ApplicationContext
                 lastUpdateDate = currentDate;
                 RebuildTabs();
                 ResizeFormToFit();
-
-                // Update tab labels
-                todayTab.Text = "Today";
-                nextBusinessDayTab.Text = GetNextBusinessDayLabel(DateTime.Today);
+                UpdateTabLabels();
             }
             else
             {
@@ -438,10 +517,14 @@ public class TrayApplicationContext : ApplicationContext
             updateTimer.Dispose();
         };
 
-        // Scroll to current time when form is shown
+        // Scroll to current time when form is shown (on today's tab)
         form.Shown += (s, e) =>
         {
-            ScrollToCurrentTime(todayTab);
+            var todayTab = weekTabs.FirstOrDefault(t => t.date.Date == DateTime.Today).tab;
+            if (todayTab != null)
+            {
+                ScrollToCurrentTime(todayTab);
+            }
         };
 
         form.Show();

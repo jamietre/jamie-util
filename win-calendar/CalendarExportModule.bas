@@ -9,8 +9,9 @@ Option Explicit
 
 ' === CONFIGURATION ===
 Public Const EXPORT_INTERVAL_MS As Long = 30000
-Public Const LOOKAHEAD_MINUTES As Integer = 5760
+Public Const LOOKAHEAD_MINUTES As Integer = 5760 ' Minutes ahead from now to export
 Public Const OUTPUT_FOLDER As String = ".config\win-calendar"
+' Note: Exports from Monday of current week through LOOKAHEAD_MINUTES ahead
 
 ' === WINDOWS API (64-bit) ===
 Private Declare PtrSafe Function SetTimer Lib "user32" (ByVal hwnd As LongPtr, ByVal nIDEvent As LongPtr, ByVal uElapse As Long, ByVal lpTimerFunc As LongPtr) As LongPtr
@@ -135,7 +136,12 @@ Public Sub DoExport()
     calItems.Sort "[Start]"
     calItems.IncludeRecurrences = True
 
-    startTime = Date ' Start of today (midnight)
+    ' Start from Monday of current week
+    Dim todayDate As Date
+    Dim dayOfWeek As Integer
+    todayDate = Date
+    dayOfWeek = Weekday(todayDate, vbMonday) ' 1 = Monday, 7 = Sunday
+    startTime = DateAdd("d", -(dayOfWeek - 1), todayDate) ' Go back to Monday
     endTime = DateAdd("n", LOOKAHEAD_MINUTES, Now)
 
     sFilter = "[Start] >= '" & Format(startTime, "mm/dd/yyyy hh:mm AMPM") & "'" & _

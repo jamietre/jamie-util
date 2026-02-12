@@ -30,7 +30,15 @@ A Windows desktop app for persistent meeting reminders with toast notifications.
 dotnet build
 ```
 
+```bash
+dotnet build -c release
+```
+
 ## Running
+
+```bash
+dotnet run -c release
+```
 
 To run the app without blocking your terminal:
 
@@ -51,7 +59,7 @@ Or simply double-click the `.exe` file to launch it normally.
 Creates a fully self-contained single .exe file that includes the .NET runtime:
 
 ```bash
-dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true
+dotnet publish -c Release -r win-x64 --self-contained true
 ```
 
 Output: `bin/Release/net8.0-windows10.0.19041.0/win-x64/publish/WinCalendar.exe`
@@ -79,6 +87,7 @@ The app stores all configuration and data in `%USERPROFILE%\.config\win-calendar
 A default `config.json` is included in the repository for reference. On first run, the app will create the config file if it doesn't exist.
 
 Files in this directory:
+
 - `config.json` - Application configuration (calendar sources, font settings)
 - `calendar-data.json` - Calendar data from Outlook VBA export (if using file source)
 - `reminder-state.json` - State tracking for dismissed/snoozed reminders
@@ -195,7 +204,6 @@ The macro exports calendar data every 30 seconds to `~/.config/win-calendar/cale
 - **Show Meetings Today** - Display all meetings for today with Join/Open in Outlook links
 - **Show Meetings Tomorrow** - Display all meetings for tomorrow
 - **Exit** - Close the application
-
 
 ## Differences from PowerShell Version
 
